@@ -1,8 +1,11 @@
 # Render Blueprint (Infrastructure as Code).
 # New → Blueprint → Git ulang; `sync: false` kalitlar Render Dashboard → Environment da to‘ldiriladi.
-# Free Web Service ~15 daqiqadan keyin uxlayishi mumkin.
-# Qo‘lda: python scripts/trigger_render_deploy.py (RENDER_DEPLOY_HOOK_URL yoki RENDER_API_KEY + RENDER_SERVICE_ID).
-# CI: `.github/workflows/render-deploy.yml` — GitHub Secrets: `RENDER_DEPLOY_HOOK_URL` (yoki API + srv ID).
+# Web: Streamlit dashboard. Worker: Telegram command bot (long-poll).
+# Worker uchun ham dashboard bilan bir xil API kalitlari kerak (/scan skan pipeline).
+# TELEGRAM_ALLOWED_CHAT_IDS — ixtiyoriy, vergul bilan chat id lar (bo‘sh bo‘lsa hammaga javob).
+# Free Web ~15 daqiqadan keyin uxlayadi; Worker alohida rejada (Blueprint sync dan keyin Dashboard da tekshiring).
+# Qo‘lda: python scripts/trigger_render_deploy.py
+# CI: `.github/workflows/render-deploy.yml` — GitHub Secrets: RENDER_DEPLOY_HOOK_URL yoki RENDER_API_KEY + RENDER_SERVICE_ID.
 
 services:
   - type: web
@@ -39,6 +42,76 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_ALERT_ON_SCAN
+        sync: false
+      - key: TELEGRAM_ALERT_TOP_N
+        sync: false
+      - key: TELEGRAM_ALERTS_ENABLED
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      - key: FMP_API_KEY
+        sync: false
+      - key: NEWSAPI_KEY
+        sync: false
+      - key: ZOYA_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: FINVIZ_ELITE_AUTH
+        sync: false
+      - key: FINVIZ_ELITE_EXPORT_QUERY
+        sync: false
+      - key: FINVIZ_ELITE_EXPORT_BASE
+        sync: false
+      - key: FETCH_UNIVERSE_FINVIZ_FIRST
+        sync: false
+
+  # Long-polling Telegram: /scan, /signals, /help (scripts/telegram_command_bot.py)
+  - type: worker
+    name: us-stock-rvol-telegram-bot
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python scripts/telegram_command_bot.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_IDS
+        sync: false
+      - key: TELEGRAM_BOT_TOP_ROWS
+        sync: false
+      - key: TELEGRAM_BOT_REPLY_TOP_N
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: POLYGON_API_KEY
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: ALPACA_BASE_URL
+        sync: false
+      - key: TRADING_MODE
+        sync: false
+      - key: DATA_DELAY_MINUTES
+        sync: false
+      - key: STRATEGY_MODE
+        sync: false
+      - key: DATABASE_URL
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
