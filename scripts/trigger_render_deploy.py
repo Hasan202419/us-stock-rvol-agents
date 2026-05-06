@@ -1,0 +1,101 @@
+"""Trigger a Render Web Service deploy.
+
+Priority (first match wins):
+  1) RENDER_DEPLOY_HOOK_URL — Service → Settings → Build & Deploy → Deploy Hook (full POST URL).
+     Use this in CI (GitHub secret) instead of exposing API keys + service IDs.
+  2) RENDER_API_KEY + RENDER_SERVICE_ID — REST `POST .../deploys`
+     (`load_project_env` resolves empty RENDER_SERVICE_ID when RENDER_API_KEY is set).
+
+Usage:
+  python scripts/trigger_render_deploy.py
+  python scripts/trigger_render_deploy.py --clear-cache
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+import requests
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from agents.bootstrap_env import ensure_env_file, load_project_env  # noqa: E402
+
+
+def main() -> int:
+    ensure_env_file(_PROJECT_ROOT)
+    load_project_env(_PROJECT_ROOT)
+
+    parser = argparse.ArgumentParser(description="Queue a Render deploy (hook URL or REST API).")
+    parser.add_argument(
+        "--service-id",
+        default=os.getenv("RENDER_SERVICE_ID", "").strip(),
+        help="Render service ID (default: RENDER_SERVICE_ID from .env)",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Pass clearCache=clear (slows first build, fixes stale dependency caches).",
+    )
+    args = parser.parse_args()
+
+    hook = os.getenv("RENDER_DEPLOY_HOOK_URL", "").strip()
+    if hook:
+        if args.clear_cache:
+            print(
+                "Note: --clear-cache is ignored for Deploy Hook; use Dashboard or API deploy if needed.",
+                file=sys.stderr,
+            )
+        response = requests.post(hook, timeout=60)
+        print(f"deploy hook http {response.status_code}", flush=True)
+        if response.text:
+            try:
+                print(response.text[:2000], flush=True)
+            except Exception:
+                pass
+        if not (200 <= response.status_code < 300):
+            return 1
+        return 0
+
+    key = os.getenv("RENDER_API_KEY", "").strip()
+    if not key:
+        print("Set RENDER_DEPLOY_HOOK_URL or RENDER_API_KEY in .env", file=sys.stderr)
+        return 1
+    if not args.service_id:
+        print(
+            "Set RENDER_SERVICE_ID in .env, pass --service-id, or use RENDER_DEPLOY_HOOK_URL.",
+            file=sys.stderr,
+        )
+        return 1
+
+    body: dict[str, str] = {}
+    if args.clear_cache:
+        body["clearCache"] = "clear"
+
+    response = requests.post(
+        f"https://api.render.com/v1/services/{args.service_id}/deploys",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        json=body if body else None,
+        timeout=60,
+    )
+    print(f"api http {response.status_code}", flush=True)
+    try:
+        print(response.text[:2000], flush=True)
+    except Exception:
+        pass
+    if response.status_code not in (201, 202):
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

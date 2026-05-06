@@ -1,0 +1,13 @@
+streamlit>=1.28.0
+plotly>=5.18
+python-dotenv
+pydantic>=2
+pydantic-settings>=2
+requests
+numpy>=2.0.0
+pandas>=2.2.0
+openai
+alpaca-py
+yfinance>=0.2.40
+pytest
+

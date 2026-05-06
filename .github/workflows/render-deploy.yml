@@ -1,0 +1,78 @@
+# Push to main yoki qo'lda: Render Web Service deploy navbatiga qo'shiladi.
+#
+# GitHub → repo → Settings → Secrets and variables → Actions:
+#   VARIANT A (tavsiya): RENDER_DEPLOY_HOOK_URL — Dashboard → Service → Build & Deploy → Deploy Hook (to'liq URL)
+#   VARIANT B: RENDER_API_KEY + RENDER_SERVICE_ID (srv-...)
+#
+# Forklarda Secret bo'lmasa push paytida bosqich ovozsiz o'tkazib yuboriladi.
+# workflow_dispatch da Secret bo'lmasa ish yiqiladi (noto'g'ri sozlash).
+
+name: Deploy to Render
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "dashboard.py"
+      - "requirements.txt"
+      - "render.yaml"
+      - "agents/**"
+      - "src/**"
+      - "pages/**"
+      - "strategy_core/**"
+      - "scripts/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy (hook or API)
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${HOOK:-}" ]]; then
+            code=$(curl -sS -o /tmp/render_deploy_body.txt -w "%{http_code}" -X POST "$HOOK") || code="000"
+            echo "deploy hook HTTP $code"
+            head -c 2000 /tmp/render_deploy_body.txt 2>/dev/null || true
+            echo ""
+            if [[ "$code" -ge 200 && "$code" -lt 300 ]]; then
+              exit 0
+            fi
+            if [[ "$EVENT" != "workflow_dispatch" ]]; then
+              echo "::warning::Deploy hook returned $code — check Render dashboard."
+              exit 0
+            fi
+            exit 1
+          fi
+
+          if [[ -n "${RENDER_API_KEY:-}" && -n "${RENDER_SERVICE_ID:-}" ]]; then
+            code=$(curl -sS -o /tmp/render_deploy_body.txt -w "%{http_code}" -X POST \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              -d '{}') || code="000"
+            echo "Render API HTTP $code"
+            head -c 2000 /tmp/render_deploy_body.txt 2>/dev/null || true
+            echo ""
+            if [[ "$code" == "201" || "$code" == "202" ]]; then
+              exit 0
+            fi
+            if [[ "$EVENT" != "workflow_dispatch" ]]; then
+              echo "::warning::Render API returned $code — check dashboard / service ID."
+              exit 0
+            fi
+            exit 1
+          fi
+
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            echo "No secrets: set RENDER_DEPLOY_HOOK_URL or RENDER_API_KEY + RENDER_SERVICE_ID"
+            exit 1
+          fi
+          echo "Skip Render deploy: no HOOK/API secrets configured."
