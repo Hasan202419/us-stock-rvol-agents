@@ -19,7 +19,7 @@ def test_duplicate_empty_keeps_prior_value() -> None:
     assert "OPENAI_API_KEY" in dups
     assert merged["OPENAI_API_KEY"].startswith("good-key")
     out, rm = rebuild_lines(lines, merged)
-    openai_assigns = [l for l in out if not l.strip().startswith("#") and l.strip().startswith("OPENAI_API_KEY=")]
+    openai_assigns = [line for line in out if not line.strip().startswith("#") and line.strip().startswith("OPENAI_API_KEY=")]
     assert len(openai_assigns) == 1
 
 

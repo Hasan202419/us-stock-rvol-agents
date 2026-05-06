@@ -1,0 +1,9 @@
+Quyidagi buyruqlar (lokal PowerShell/cmd) Downloads dagi PDF lardan matn olish uchun:
+
+pip install pymupdf
+python scripts/extract_pdf_text.py "C:\Users\o8324\Downloads\Texnik xulosa.pdf" -o docs/generated/texnik_xulosa_native.txt
+
+Skan uchun (Trading Edge — OCR kerak):
+
+pip install pymupdf pytesseract pillow
+python scripts/extract_pdf_text.py "C:\Users\o8324\Downloads\Engineering_the_Trading_Edge.pdf" -o docs/generated/engineering_the_trading_edge_ocr.txt --ocr --dpi 200

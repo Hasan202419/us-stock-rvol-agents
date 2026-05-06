@@ -1,10 +1,26 @@
 import json
 import os
+import random
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List
 
 import requests
 from openai import OpenAI
+
+
+def _retryable_openai(exc: BaseException) -> bool:
+    """429/5xx va ulanish xatolarida qayta urinish (OpenAI SDK turli versiyalar uchun)."""
+
+    name = type(exc).__name__
+    if name in {"RateLimitError", "APIConnectionError", "APITimeoutError", "InternalServerError"}:
+        return True
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int) and code in {408, 425, 429, 500, 502, 503, 504}:
+        return True
+    resp = getattr(exc, "response", None)
+    rcode = getattr(resp, "status_code", None) if resp is not None else None
+    return isinstance(rcode, int) and rcode in {408, 425, 429, 500, 502, 503, 504}
 
 
 class ChatGPTAnalystAgent:
@@ -87,32 +103,50 @@ class ChatGPTAnalystAgent:
             },
         }
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a cautious stock-scanning analyst (schema v2). "
-                            "Never claim executions. JSON keys: "
-                            "decision,confidence,reason,risk_level,allow_order,"
-                            "risk_flags,risk_flags_hard,entry_condition,paper_ready_blocked. "
-                            "decision is WATCH, STRONG_WATCH, or AVOID. "
-                            "If reckless, populate risk_flags_hard with short uppercase codes."
-                        ),
-                    },
-                    {"role": "user", "content": json.dumps(prompt, default=str)},
-                ],
-                temperature=0.2,
-            )
-            raw_content = response.choices[0].message.content or "{}"
-            data = json.loads(raw_content)
-        except Exception as exc:
-            return self._fallback(f"{self._llm_label} analysis failed: {exc}")
+        max_retries = max(1, int(os.getenv("OPENAI_ANALYSIS_MAX_RETRIES", "4")))
+        base_sec = float(os.getenv("OPENAI_ANALYSIS_RETRY_BASE_SEC", "1.25"))
 
-        return self._normalize_response(data)
+        last_api_error: BaseException | None = None
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a cautious stock-scanning analyst (schema v2). "
+                                "Never claim executions. JSON keys: "
+                                "decision,confidence,reason,risk_level,allow_order,"
+                                "risk_flags,risk_flags_hard,entry_condition,paper_ready_blocked. "
+                                "decision is WATCH, STRONG_WATCH, or AVOID. "
+                                "If reckless, populate risk_flags_hard with short uppercase codes."
+                            ),
+                        },
+                        {"role": "user", "content": json.dumps(prompt, default=str)},
+                    ],
+                    temperature=0.2,
+                )
+                raw_content = response.choices[0].message.content or "{}"
+            except Exception as exc:
+                last_api_error = exc
+                if not _retryable_openai(exc) or attempt >= max_retries - 1:
+                    break
+                delay = base_sec * (2**attempt) + random.uniform(0, 0.35)
+                time.sleep(delay)
+                continue
+
+            try:
+                data = json.loads(raw_content)
+            except json.JSONDecodeError as exc:
+                return self._fallback(f"{self._llm_label} returned invalid JSON: {exc}")
+
+            return self._normalize_response(data)
+
+        if last_api_error is not None:
+            return self._fallback(f"{self._llm_label} analysis failed: {last_api_error}")
+        return self._fallback(f"{self._llm_label} analysis failed (no response).")
 
     def _fetch_news(self, ticker: str) -> List[Dict[str, str]]:
         if not self.finnhub_api_key:

@@ -7,8 +7,6 @@ if os.environ.get("RENDER", "").strip().lower() == "true":
     os.environ.setdefault("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")
     os.environ.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -17,19 +15,10 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
-from agents.alpaca_paper_trading_agent import AlpacaPaperTradingAgent
 from agents.bootstrap_env import ensure_env_file, load_project_env
-from agents.chatgpt_analyst_agent import ChatGPTAnalystAgent
-from agents.email_alerts_agent import EmailAlertsAgent
-from agents.logger_agent import LoggerAgent
-from agents.market_data_agent import MarketDataAgent
-from agents.risk_manager_agent import RiskManagerAgent
-from agents.rvol_agent import RVOLAgent
-from agents.strategy_agent import StrategyAgent
-from agents.strategy_factory import resolve_strategy_mode, run_stage_one_strategy
-from agents.strategy_volume_ignition import VolumeIgnitionStrategyAgent
-from agents.strategy_vwap_breakout import VwapBreakoutStrategyAgent
-from agents.telegram_alerts_agent import TelegramAlertsAgent
+from agents.scan_pipeline import SidebarControls, build_scan_agents, run_scan_market
+from agents.scan_presets import SCAN_PRESETS
+from agents.strategy_factory import resolve_strategy_mode
 from agents.universe_agent import UniverseAgent
 
 
@@ -39,13 +28,6 @@ load_project_env(PROJECT_DIR)
 os.environ.setdefault("PROJECT_ROOT", str(PROJECT_DIR))
 
 # Looser defaults make empty screens less likely; traders can pick “Conservative” for old behavior.
-SCAN_PRESETS: Dict[str, Dict[str, float]] = {
-    "Explorer": {"min_rvol": 1.0, "min_price": 0.5, "min_volume": 80_000, "min_change_percent": -3.0},
-    "Balanced": {"min_rvol": 1.35, "min_price": 1.0, "min_volume": 200_000, "min_change_percent": -1.0},
-    "Conservative": {"min_rvol": 2.0, "min_price": 1.0, "min_volume": 500_000, "min_change_percent": 0.05},
-}
-
-
 def _intraday_strategy_mode(mode: str) -> bool:
     return mode.strip().lower() in {"vwap_breakout", "mtrade_high_volatility"}
 
@@ -208,7 +190,7 @@ def render_pipeline_hero(strategy_mode: str, preset: str | None) -> None:
         layers_md = "\n".join(f"- {x}" for x in layers_vi)
         focus = "Kunlik asos; intraday grafik shart emas."
     elif _intraday_strategy_mode(strategy_mode):
-        layers_md = "\n".join(f"- {x}" for x in layers_vw)
+        layers_md = "\n".join(f"- {x}" for x in layers_vwap)
         focus = "Intraday sessiya bardalari va VWAP chizig‘i muhim."
     else:
         layers_md = "\n".join(f"- {x}" for x in layers_rvol)
@@ -454,28 +436,12 @@ def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
         st.plotly_chart(fig, use_container_width=True)
 
 
-@dataclass
-class SidebarControls:
-    desk_label: str
-    max_symbols: int
-    preset_name: str
-    rvol_thresholds: Dict[str, float]
-    max_workers: int
-    finviz_csv_universe: bool
 
 
 def build_agents() -> Dict[str, Any]:
-    """Create the agents after .env values have loaded."""
-    return {
-        "universe": UniverseAgent(),
-        "market_data": MarketDataAgent(),
-        "rvol": RVOLAgent(),
-        "strategy": StrategyAgent(),
-        "analyst": ChatGPTAnalystAgent(),
-        "risk": RiskManagerAgent(trades_log_path=str(PROJECT_DIR / "logs" / "trades.csv"), repo_root=PROJECT_DIR),
-        "trader": AlpacaPaperTradingAgent(),
-        "logger": LoggerAgent(logs_dir=str(PROJECT_DIR / "logs")),
-    }
+    """Create the agents after .env values have loaded (dashboard + paper panel)."""
+
+    return build_scan_agents(PROJECT_DIR)
 
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -486,218 +452,11 @@ def cached_universe_symbols(limit: int, use_finviz_elite: bool) -> Tuple[str, ..
 
 
 def scan_market(tickers: List[str], controls: SidebarControls) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
-    """Run the pipeline with a fast parallel stage for market data + rules.
-
-    ChatGPT stays single-threaded after filters to avoid rate-limit surprises.
-    """
-
-    agents = build_agents()
-    signals: List[Dict[str, Any]] = []
-    full_scan_logs: List[Dict[str, Any]] = []
-    full_scan_views: List[Dict[str, Any]] = []
-
-    scanned = len(tickers)
-    strategy_mode = resolve_strategy_mode()
-
-    rvol_strategy = StrategyAgent()
-    vwap_strategy = VwapBreakoutStrategyAgent()
-    ignition_strategy = VolumeIgnitionStrategyAgent()
-
-    def stage_one(symbol: str) -> Tuple[str, Dict[str, Any]]:
-        try:
-            market_data = agents["market_data"].fetch_market_data(symbol)
-            base_snapshot = agents["rvol"].calculate(market_data)
-            signal = run_stage_one_strategy(
-                strategy_mode,
-                market_data=agents["market_data"],
-                rvol_snapshot=base_snapshot,
-                rvol_thresholds=controls.rvol_thresholds,
-                rvol_strategy=rvol_strategy,
-                vwap_strategy=vwap_strategy,
-                ignition_strategy=ignition_strategy,
-            )
-
-            return symbol, signal
-
-        except Exception:
-            fallback = {
-                "ticker": symbol,
-                "strategy_pass": False,
-                "failed_rules": ["fetch_error"],
-                "score": 0,
-                "price": 0.0,
-                "change_percent": 0.0,
-                "volume": 0,
-                "avg_volume": 0,
-                "rvol": 0.0,
-                "data_delay": f"{agents['market_data'].data_delay_minutes}-minute delayed",
-                "updated_time": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
-                "strategy_name": _strategy_fallback_name(strategy_mode),
-            }
-            return symbol, fallback
+    """Run the pipeline with Streamlit progress; logic lives in agents.scan_pipeline."""
 
     progress = st.progress(0.0, text="Stage 1 · fetching symbols…")
-    results: Dict[str, Dict[str, Any]] = {}
-    max_workers = max(2, int(controls.max_workers))
+    return run_scan_market(tickers, controls, repo_root=PROJECT_DIR, progress=progress)
 
-    completed = 0
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(stage_one, symbol): symbol for symbol in tickers}
-        for future in as_completed(futures):
-            symbol, signal = future.result()
-            results[symbol] = signal
-            completed += 1
-            progress.progress(
-                completed / max(len(tickers), 1),
-                text=f"Stage 1 · {completed}/{len(tickers)} tickers prepared",
-            )
-
-    progress.progress(1.0, text="Stage 2 · running ChatGPT on passes…")
-
-    for symbol in tickers:
-        signal = results[symbol]
-
-        analyst_decision = ""
-        analyst_reason = ""
-        risk_level_value = ""
-        chatgpt_allow = False
-
-        if signal.get("strategy_pass"):
-            analyst_view = agents["analyst"].analyze(signal)
-            lineage = {
-                "strategy_name": signal.get("strategy_name"),
-                "daily_bar_ts": signal.get("daily_bar_timestamp_ms"),
-                "daily_ema_9": signal.get("daily_ema_9"),
-                "daily_rsi_14": signal.get("daily_rsi_14"),
-                "daily_atr_14": signal.get("daily_atr_14"),
-                "session_vwap": signal.get("session_vwap"),
-                "rsi_14": signal.get("rsi_14"),
-                "atr_14": signal.get("atr_14"),
-                "ignition_trend_stage": signal.get("ignition_trend_stage"),
-                "ignition_distance_to_resistance_pct": signal.get("ignition_distance_to_resistance_pct"),
-                "volume_pattern_summary": signal.get("volume_pattern_summary"),
-                "ignition_continuation_probability": signal.get("ignition_continuation_probability"),
-            }
-            signal.update(
-                {
-                    "chatgpt_decision": analyst_view["decision"],
-                    "chatgpt_confidence": analyst_view["confidence"],
-                    "chatgpt_reason": analyst_view["reason"],
-                    "risk_level": analyst_view["risk_level"],
-                    "chatgpt_allow_order": analyst_view["allow_order"],
-                    "chatgpt_risk_flags_json": json.dumps(analyst_view.get("risk_flags") or []),
-                    "chatgpt_risk_flags_hard_json": json.dumps(analyst_view.get("risk_flags_hard") or []),
-                    "chatgpt_entry_condition": analyst_view.get("entry_condition", ""),
-                    "paper_ready_blocked_field": analyst_view.get("paper_ready_blocked"),
-                    "indicator_lineage_json": json.dumps(lineage, default=str),
-                }
-            )
-            analyst_decision = analyst_view["decision"]
-            analyst_reason = analyst_view["reason"]
-            risk_level_value = analyst_view["risk_level"]
-            chatgpt_allow = bool(analyst_view["allow_order"])
-            signals.append(signal)
-
-        failed_rules = ",".join(signal.get("failed_rules") or [])
-
-        full_scan_logs.append(
-            {
-                "ticker": signal.get("ticker"),
-                "strategy_name": signal.get("strategy_name"),
-                "price": signal.get("price"),
-                "change_percent": signal.get("change_percent"),
-                "volume": signal.get("volume"),
-                "avg_volume": signal.get("avg_volume"),
-                "rvol": signal.get("rvol"),
-                "session_vwap": signal.get("session_vwap"),
-                "rsi_14": signal.get("rsi_14"),
-                "atr_14": signal.get("atr_14"),
-                "vwap_cross": signal.get("vwap_cross"),
-                "take_profit_suggestion": signal.get("take_profit_suggestion"),
-                "stop_suggestion": signal.get("stop_suggestion"),
-                "score": signal.get("score"),
-                "strategy_pass": signal.get("strategy_pass"),
-                "failed_rules": failed_rules,
-                "chatgpt_decision": analyst_decision,
-                "chatgpt_risk_flags": signal.get("chatgpt_risk_flags_json", "[]"),
-                "chatgpt_flags_hard": signal.get("chatgpt_risk_flags_hard_json", "[]"),
-                "chatgpt_entry_condition": signal.get("chatgpt_entry_condition", ""),
-                "indicator_lineage_json": signal.get("indicator_lineage_json", ""),
-                "risk_level": risk_level_value,
-                "chatgpt_allow_order": chatgpt_allow,
-                "data_delay": signal.get("data_delay"),
-                "updated_time": signal.get("updated_time"),
-            }
-        )
-
-        full_scan_views.append(
-            {
-                "Ticker": signal.get("ticker"),
-                "Strategy": signal.get("strategy_name"),
-                "Price": signal.get("price"),
-                "Change %": signal.get("change_percent"),
-                "Volume": signal.get("volume"),
-                "Avg Volume": signal.get("avg_volume"),
-                "RVOL": signal.get("rvol"),
-                "VWAP": signal.get("session_vwap"),
-                "RSI": signal.get("rsi_14"),
-                "ATR": signal.get("atr_14"),
-                "Latest cross": signal.get("vwap_cross"),
-                "Strategy Pass": "Yes" if signal.get("strategy_pass") else "No",
-                "Failed Rules": failed_rules if failed_rules else "—",
-                "Score": signal.get("score"),
-                "TP idea": signal.get("take_profit_suggestion"),
-                "SL idea": signal.get("stop_suggestion"),
-                "Ign Stage": signal.get("ignition_trend_stage"),
-                "Ign R dist%": signal.get("ignition_distance_to_resistance_pct"),
-                "ChatGPT Decision": analyst_decision or "—",
-                "Risk Level": risk_level_value or "—",
-                "Data Delay": signal.get("data_delay"),
-                "Updated Time": signal.get("updated_time"),
-            }
-        )
-
-    progress.empty()
-    agents["logger"].save_signals(signals)
-    agents["logger"].save_full_scan(full_scan_logs)
-    ranked_signals = sorted(signals, key=lambda item: item.get("score", 0), reverse=True)
-
-    if os.getenv("TELEGRAM_ALERT_ON_SCAN", "").strip().lower() in {"1", "true", "yes", "on"}:
-        tg = TelegramAlertsAgent()
-        tg.notify_scan_summary(
-            {
-                "tickers_scanned": scanned,
-                "eligible_signals": len(signals),
-                "strategy_mode": strategy_mode,
-            }
-        )
-        tg.notify_signals(ranked_signals, max_items=int(os.getenv("TELEGRAM_ALERT_TOP_N", "3")))
-
-    mail_on = os.getenv("EMAIL_ALERT_ON_SCAN", "").strip().lower() in {"1", "true", "yes", "on"}
-    mail_en = os.getenv("EMAIL_ALERTS_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
-    if mail_on or mail_en:
-        em = EmailAlertsAgent()
-        em.notify_scan_summary(
-            {
-                "tickers_scanned": scanned,
-                "eligible_signals": len(signals),
-                "strategy_mode": strategy_mode,
-            }
-        )
-        top_n_email = os.getenv("EMAIL_ALERT_TOP_N", "") or os.getenv("TELEGRAM_ALERT_TOP_N", "3")
-        em.notify_signals(ranked_signals, max_items=int(top_n_email or "3"))
-    summary = {
-        "tickers_scanned": scanned,
-        "eligible_signals": len(signals),
-        "failed_signals": scanned - len(signals),
-        "symbols_input": scanned,
-        "strategy_mode": strategy_mode,
-        "scan_preset": controls.preset_name,
-        "parallel_workers": controls.max_workers,
-        "rvol_thresholds": controls.rvol_thresholds,
-        "desk_label": controls.desk_label,
-    }
-    return ranked_signals, full_scan_views, summary
 
 
 def signals_dataframe(signals: List[Dict[str, Any]], strategy_mode: str = "rvol") -> pd.DataFrame:

@@ -150,10 +150,10 @@ def candles_to_sorted_bars(candles: List[Dict[str, Any]]) -> List[Dict[str, Any]
     for raw in rows:
         o = float(raw.get("o") or raw.get("open") or 0)
         h = float(raw.get("h") or raw.get("high") or 0)
-        l = float(raw.get("l") or raw.get("low") or 0)
+        low_px = float(raw.get("l") or raw.get("low") or 0)
         c = float(raw.get("c") or raw.get("close") or 0)
         v = float(raw.get("v") or raw.get("volume") or 0)
-        out.append({"t": row_ts(raw), "o": o, "h": h, "l": l, "c": c, "v": v})
+        out.append({"t": row_ts(raw), "o": o, "h": h, "l": low_px, "c": c, "v": v})
 
     return out
 

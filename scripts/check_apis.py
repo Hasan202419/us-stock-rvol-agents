@@ -1,6 +1,7 @@
 """Offline-friendly API sanity checks: prints statuses only (never prints secrets).
 
-Tekshiriladi (agar .env da bor bo'lsa): OpenAI, DeepSeek, Polygon, Finnhub, Alpaca, Render (account + service),
+Tekshiriladi (agar .env da bor bo'lsa): OpenAI, DeepSeek, Polygon, Finnhub, Alpaca,
+Yahoo Finance (yfinance), Alpha Vantage (ixtiyoriy), Render (account + service),
 GitHub, Supabase, Telegram (getMe + getChat), SMTP email (sozlangan/bo‘sh), FMP, NewsAPI, Zoya. Oxirda xulosa: muvaffaqiyat / o'tkazilgan / xato.
 """
 
@@ -14,9 +15,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-import requests
+import requests  # noqa: E402
 
-from agents.bootstrap_env import ensure_env_file, load_project_env
+from agents.bootstrap_env import ensure_env_file, load_project_env  # noqa: E402
 
 
 def _scrub_secret(value: str) -> str:
@@ -343,6 +344,44 @@ def main() -> int:
     else:
         track("alpaca", "skipped")
 
+    yahoo_on = os.getenv("YAHOO_FINANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if yahoo_on:
+        try:
+            import yfinance as yf
+
+            probe = yf.Ticker("AAPL").history(period="7d", interval="1d", auto_adjust=False, actions=False)
+            if probe is None or probe.empty:
+                track("yahoo (yfinance)", "empty (yahoo rate-limit yoki set yo‘q)")
+            else:
+                track("yahoo (yfinance)", f"ok (~{len(probe)} kunlik satr)")
+        except ImportError:
+            track("yahoo (yfinance)", "fail (ImportError — pip install yfinance)")
+        except Exception as exc:
+            track("yahoo (yfinance)", f"fail ({type(exc).__name__})")
+    else:
+        track("yahoo (yfinance)", "disabled (YAHOO_FINANCE_ENABLED=false)")
+
+    av_ok = not looks_placeholder("ALPHA_VANTAGE_API_KEY", ck("ALPHA_VANTAGE_API_KEY"))
+    av_enabled = os.getenv("ALPHA_VANTAGE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if av_ok and av_enabled:
+        try:
+            from agents.alpha_vantage_client import fetch_daily_adjusted
+
+            rows = fetch_daily_adjusted("AAPL", ck("ALPHA_VANTAGE_API_KEY"), outputsize="compact")
+            if rows:
+                track("alpha_vantage", f"ok (~{len(rows)} daily)")
+            else:
+                track(
+                    "alpha_vantage",
+                    "empty | rate_notes (kalit tekshirish; bepul rejada 25 so‘rov/kun)",
+                )
+        except Exception as exc:
+            track("alpha_vantage", f"fail ({type(exc).__name__})")
+    elif not av_ok:
+        track("alpha_vantage", "skipped")
+    else:
+        track("alpha_vantage", "disabled (ALPHA_VANTAGE_ENABLED=false)")
+
     if render_ok:
         try:
             response = requests.get(
@@ -532,6 +571,22 @@ def main() -> int:
             "fmp: 403 — rejangiz/profile endpoint bloklangan yoki kalit mos emas; "
             "financialmodelingprep.com/dashboard va ularning yangi Stable API bo'limini ko'ring."
         )
+
+    for label, detail in outcomes:
+        if label == "yahoo (yfinance)" and _classify_outcome(detail) == "fail":
+            log(
+                "yahoo (yfinance): `pip install -U yfinance` va tarmoqni tekshiring; "
+                "requirements.txt da bor — MarketDataAgent `.env` bilan skan/dashda gaplarni to‘ldirishda ishlatadi."
+            )
+            break
+
+    for label, detail in outcomes:
+        if label == "alpha_vantage" and _classify_outcome(detail) == "fail":
+            log(
+                "alpha_vantage: kalit `.env`da bo‘lsa — bepul rejada kunlik limit; "
+                "Polygon/Yahoo tugasa kunlik shamalar uchun `ALPHA_VANTAGE_ENABLED=true`."
+            )
+            break
 
     return 0
 

@@ -1,0 +1,10 @@
+--- extracted from Engineering_the_Trading_Edge.pdf (19 pages, native PDF text layers only) ---
+
+(No selectable text in source file — sahifalar sahifa raqami bilan chiqarilgan. OCR uchun:
+
+  pip install pymupdf pytesseract pillow
+  # Tesseract PATHda bo‘lsin
+
+  cd us-stock-rvol-agents
+  python scripts/extract_pdf_text.py "C:\\Users\\o8324\\Downloads\\Engineering_the_Trading_Edge.pdf" -o docs/generated/engineering_the_trading_edge_ocr.txt --ocr --dpi 200
+)

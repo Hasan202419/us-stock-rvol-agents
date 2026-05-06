@@ -10,9 +10,9 @@ def test_snapshot_from_daily_trend_series() -> None:
         price += 0.15 + (idx % 3) * 0.02
         c = price
         h = max(o, c) + 0.05
-        l = min(o, c) - 0.05
+        low_px = min(o, c) - 0.05
         v = 1_000_000 + idx * 500
-        candles.append({"t": t, "o": o, "h": h, "l": l, "c": c, "v": v})
+        candles.append({"t": t, "o": o, "h": h, "l": low_px, "c": c, "v": v})
 
     snap = snapshot_from_daily_candles(candles)
     assert snap["closes_series_len"] == len(candles)

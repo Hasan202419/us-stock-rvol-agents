@@ -3,7 +3,10 @@
 # Web: Streamlit dashboard. Worker: Telegram command bot (long-poll).
 # Worker uchun ham dashboard bilan bir xil API kalitlari kerak (/scan skan pipeline).
 # TELEGRAM_ALLOWED_CHAT_IDS — ixtiyoriy, vergul bilan chat id lar (bo‘sh bo‘lsa hammaga javob).
+# AI_PROVIDER va OPENAI_* — WEB va WORKER da bir xil bo‘lsa, skanda ChatGPT bosqichi ikkalasida ishlaydi.
+# WORKER uchun TELEGRAM_SCAN_PRESET / alert lar quyidagi default qiymatlar bilan yonadi (Dashboard da o‘zgartirish mumkin).
 # Free Web ~15 daqiqadan keyin uxlayadi; Worker alohida rejada (Blueprint sync dan keyin Dashboard da tekshiring).
+
 # Qo‘lda: python scripts/trigger_render_deploy.py
 # CI: `.github/workflows/render-deploy.yml` — GitHub Secrets: RENDER_DEPLOY_HOOK_URL yoki RENDER_API_KEY + RENDER_SERVICE_ID.
 
@@ -24,6 +27,18 @@ services:
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: POLYGON_API_KEY
+        sync: false
+      - key: YAHOO_FINANCE_ENABLED
+        sync: false
+      - key: INTRADAY_YAHOO_BEFORE_POLYGON
+        sync: false
+      - key: ALPHA_VANTAGE_API_KEY
+        sync: false
+      - key: ALPHA_VANTAGE_ENABLED
+        sync: false
+      - key: OPENAI_ANALYSIS_MAX_RETRIES
+        sync: false
+      - key: OPENAI_ANALYSIS_RETRY_BASE_SEC
         sync: false
       - key: FINNHUB_API_KEY
         sync: false
@@ -91,11 +106,37 @@ services:
         sync: false
       - key: TELEGRAM_BOT_REPLY_TOP_N
         sync: false
+      - key: TELEGRAM_SCAN_PRESET
+        value: Balanced
+      - key: TELEGRAM_MAX_SYMBOLS
+        value: "80"
+      - key: TELEGRAM_DESK_LABEL
+        value: TG scan
+      - key: TELEGRAM_ALERT_ON_SCAN
+        value: "true"
+      - key: TELEGRAM_ALERT_TOP_N
+        value: "5"
+      - key: TELEGRAM_USE_FINVIZ_CSV
+        sync: false
+      - key: TELEGRAM_SKIP_DELETE_WEBHOOK
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: POLYGON_API_KEY
+        sync: false
+      - key: YAHOO_FINANCE_ENABLED
+        sync: false
+      - key: INTRADAY_YAHOO_BEFORE_POLYGON
+        sync: false
+      - key: ALPHA_VANTAGE_API_KEY
+        sync: false
+      - key: ALPHA_VANTAGE_ENABLED
+        sync: false
+      - key: OPENAI_ANALYSIS_MAX_RETRIES
+        sync: false
+      - key: OPENAI_ANALYSIS_RETRY_BASE_SEC
         sync: false
       - key: FINNHUB_API_KEY
         sync: false
@@ -114,10 +155,6 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: TELEGRAM_CHAT_ID
-        sync: false
-      - key: TELEGRAM_ALERT_ON_SCAN
-        sync: false
-      - key: TELEGRAM_ALERT_TOP_N
         sync: false
       - key: TELEGRAM_ALERTS_ENABLED
         sync: false

@@ -32,9 +32,20 @@ class MarketDataAgent:
             "yes",
             "on",
         }
+        self.intraday_yahoo_before_polygon = os.getenv("INTRADAY_YAHOO_BEFORE_POLYGON", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.intraday_cache_ttl = float(os.getenv("INTRADAY_CACHE_TTL_SECONDS", "45"))
         self.http_max_retries = max(1, int(os.getenv("MARKET_HTTP_MAX_RETRIES", "4")))
         self.http_backoff_base = float(os.getenv("MARKET_HTTP_BACKOFF_BASE_SEC", "0.75"))
+        self.alpha_vantage_api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "").strip()
+        self.alpha_vantage_enabled = (
+            bool(self.alpha_vantage_api_key)
+            and os.getenv("ALPHA_VANTAGE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+        )
         self.regular_session_filter = os.getenv("FILTER_INTRADAY_REGULAR_SESSION", "false").strip().lower() in (
             "1",
             "true",
@@ -72,6 +83,8 @@ class MarketDataAgent:
         volume = snapshot.get("volume") or alpaca_bar.get("volume") or yahoo_bundle.get("volume") or 0
         if not candles:
             candles = yahoo_bundle.get("candles") or []
+        if not candles and self.alpha_vantage_enabled:
+            candles = self._fetch_alpha_vantage_daily(ticker)
         avg_volume = self._average_volume(candles) or snapshot.get("previous_volume") or volume
         change_percent = self._change_percent(price, previous_close)
 
@@ -148,6 +161,20 @@ class MarketDataAgent:
             return response.json().get("results", [])
         except requests.RequestException:
             return []
+
+    def _fetch_alpha_vantage_daily(self, ticker: str, limit: int = 120) -> List[Dict[str, Any]]:
+        if not self.alpha_vantage_enabled or not self.alpha_vantage_api_key:
+            return []
+
+        try:
+            from agents.alpha_vantage_client import fetch_daily_adjusted
+
+            rows = fetch_daily_adjusted(ticker, self.alpha_vantage_api_key, outputsize="compact")
+        except Exception:
+            return []
+
+        cap = max(5, limit)
+        return rows[:cap] if rows else []
 
     def _fetch_alpaca_latest_bar(self, ticker: str) -> Dict[str, float]:
         if not self.alpaca_api_key or not self.alpaca_secret_key:
@@ -243,7 +270,7 @@ class MarketDataAgent:
         timeframe_minutes: int = 5,
         lookback_calendar_days: int | None = None,
     ) -> List[Dict[str, Any]]:
-        """Grab recent intraday bars (Alpaca, then Polygon, then Yahoo Finance)."""
+        """Grab recent intraday bars: Alpaca first, then Polygon and Yahoo (order via INTRADAY_YAHOO_BEFORE_POLYGON)."""
 
         minutes = max(1, int(timeframe_minutes))
         cache_key = (ticker.upper(), minutes)
@@ -270,6 +297,13 @@ class MarketDataAgent:
 
         bars = self._intraday_via_alpaca(ticker=ticker, timeframe_minutes=timeframe_minutes, window_days=window_days)
         if bars:
+            return bars
+
+        if self.intraday_yahoo_before_polygon:
+            bars = self._intraday_via_yahoo(symbol=ticker, timeframe_minutes=timeframe_minutes, window_days=window_days)
+            if bars:
+                return bars
+            bars = self._intraday_via_polygon(ticker=ticker, timeframe_minutes=timeframe_minutes, window_days=window_days)
             return bars
 
         bars = self._intraday_via_polygon(ticker=ticker, timeframe_minutes=timeframe_minutes, window_days=window_days)
@@ -449,7 +483,7 @@ class MarketDataAgent:
         return mapping.get(timeframe_minutes, "5m")
 
     def _intraday_via_yahoo(self, symbol: str, timeframe_minutes: int, window_days: int) -> List[Dict[str, Any]]:
-        """Minute aggregates from Yahoo; used after Alpaca/Polygon."""
+        """Minute aggregates from Yahoo; fallback or before Polygon when INTRADAY_YAHOO_BEFORE_POLYGON is set."""
 
         if not self.yahoo_finance_enabled:
             return []

@@ -1,0 +1,732 @@
+--- extracted from Texnik xulosa.pdf (12 pages) native ---
+
+Texnik xulosa
+Mazkur loyihada Telegram-bot yordamida fond bozorini kuzatuvchi va skrining qiluvchi tizim yaratish
+bo‘yicha batafsil reja taqdim etiladi. Arxitektura variantlari (serverless, VPS, konteyner), Telegram
+integratsiyasi (webhook va long-polling), ChatGPT API ishlatilishi (promptni tuzish, limitlar, xarajatni tejash,
+striming), tashqi bozor ma’lumotlari API’lari (jahon va O‘zbekiston bozorlariga oid provayderlar, real-vaqt vs
+kechiktirilgan, WebSocket vs REST, autentifikatsiya), skrinner dizayni (indikatorlar, vaqt oralig‘lari, backtest
+qo‘llab-quvvatlash, foydalanuvchi qoidalari), avtomatik yangilanish va rejalashtirish (cron, vazifa navbatlari,
+hodisa-asosida triggerlar), signal yaratish logikasi (qoidalar misollari, xavf filtrlari, pozitsiya hajmi,
+“cooldown” mexanizmi), ChatGPT, bozor API va broker API’larini birlashmasi (multi-API orkestratsiyasi),
+xavfsizlik (API kalitlari, foydalanuvchi autentifikatsiyasi, limitlar, ma’lumotlar maxfiyligi), joylashtirish va
+monitoring, xarajatlar kabi masalalar yoritiladi. Zarur komponentlar, ma’lumot oqim diagrammasi
+(Mermaid), amalga oshirish bosqichlari va jadvali, test rejası, shuningdek 3 ta ma’lumot provayderi va 3 ta
+hosting varianti taqqoslanadi. Rasmiy hujjatlar va ishonchli manbalarga tayangan holda batafsil tahlil
+beriladi.
+Arxitektura variantlari
+Serverless (Function): Telegram webhook orqali voqealar kelganda faollashadi; masalan, AWS
+Lambda yoki Cloudflare Workers. Ishlatilmagan vaqtda resurs sarfi deyarli yo‘q. Bu model burilishli
+yoki kam trafikli botlar uchun iqtisodiy, chunki har bir so‘rov bo‘yicha to‘lashadi
+. Masalan,
+Cloudflare Workers’da “cold start” juda kichik (<5ms) bo‘lib, globallashgan tarmoq orqali ishlaydi
+. Ammo yuqori trafikli doimiy xizmatlar uchun doimiy o‘rnatilgan muhit (kontener yoki VPS)
+arzonroq bo‘lishi mumkin. 
+Konteyner (Docker/Kubernetes): Botni konteynerga joylashtirib, AWS ECS, GCP Cloud Run yoki
+Kubernetes klasterda ishlatish mumkin. Bu arxitektura barqaror ishlash tezligi beradi va murakkab
+bog‘liqliklarni boshqarish imkonini beradi, ammo infratuzilma o‘rnatish va boshqarish murakkabroq
+. Uzluksiz trafik va aniq kechikish talab qilinsa konteynerlar ustun. 
+VPS (Virtual Server): Masalan, DigitalOcean Droplet yoki AWS EC2-da botni doimiy jo‘ylashtirish.
+Serverga to‘liq nazorat va istalgan modulni o‘rnatish mumkin. Biroq, u doim yoqilgan bo‘lib, har oy 5–
+10$ (yoki ko‘proq) doimiy xarajat talab qiladi. Katta hajmli so‘rovlar uchun resurslar yanada
+balanslanishi mumkin, ammo bo‘sh vaqtlar uchun ham to‘lov bo‘ladi. 
+Resurslar: Docker, Kubernetes, AWS Lambda/Azure Functions hujjatlari; serverless vs container maqolalari
+.
+Telegram integratsiyasi: Webhook vs Long Polling
+Telegram Bot API ikki usulni qo‘llaydi: long-polling va webhook
+. 
+Long-polling: Bot doimiy getUpdates  chaqiradi va yangilanishlarni tekshiradi
+. Lokal
+rivojlantirish uchun qulay: oddiy, SSL va domen kerak emas
+. Ammo Telegram bitta bot uchun
+• 
+1
+2
+3
+2
+• 
+1
+• 
+1
+3
+4
+5
+• 
+6
+7
+1
+
+
+faqat bitta polling jarayoniga ruxsat beradi, shuning uchun gorizontal ko‘lamlash mushkul
+. Kichik
+trafikda resurslarni behuda sarflash (bo‘sh so‘rovlar) va kechikish kamchiliklari bor. 
+Webhook: Botga HTTPS URL berilib, Telegram har bir xabarni shu URLga PUSH qiladi
+. Bu past
+kechikish va resurs ishlatishni talab qilmaydi (faqat yangilanish bo‘lsa). IoT yoki serverless muhitlarda
+eng yaxshi variant; AWS Lambda, Cloudflare kabi platformalar bilan mos
+. Uchinchi tomonga
+ishonchli SSL (yoki let’s encrypt) bilan doimiy domen kerak. Webhook bilan bir nechta server
+nusxalarini murakkabroq boshqarish mumkin, zerikarli so‘rovlar bo‘lmaydi. Tijorat muhit uchun
+odatda webhook tavsiya etiladi
+. 
+Manbalar: Telegram Bot API hujjatlari; GramIO weblog (webhook vs polling)
+; DigitalOcean blog
+(webhook serverless)
+.
+ChatGPT API ishlatilishi
+Prompt dizayni: Bot foydalanuvchi so‘rovini ChatGPT modeliga yuboradi. Sokin va aniq
+instruktsiyalar bilan samarali prompt tuzing (masalan, “Ishlab chiqarish qoidalariga muvofiq javob
+ber” kabi). Keraksiz ma’lumotni qisqartirish va faqat mavzu bo‘yicha savol berish orqali token sarfini
+kamaytirish mumkin. Uzun misollarni unchalik yozmaslik kerak; qisqartirish ham token chegarasini,
+ham xarajatni kamaytiradi
+. Foydalanuvchi kiritmalari tahlili va oldindan tekshiruv ChatGPT
+javoblari sifatini oshiradi. 
+Rate-limiting va arxitektur jamoasi: OpenAI API so‘rov cheklovlari (requests per minute/token per
+minute) mavjud
+. Agar bot yuqori tezlikda so‘rov yollasa, 429 xatolik chiqishi mumkin. Bu
+holatlarda eksponensial qayta urinuv (exponential backoff) strategiyasidan foydalanish kerak
+.
+So‘rovlar chegarasiga to‘la yetmaslik uchun max_tokens  parametrini haqiqiy jarayon hajmiga
+moslab qo‘yish, promptni soddalashtirish maslahat beriladi
+. Shuningdek, turli model (GPT-4,
+GPT-3.5) limiti va narxlari farqliligini yodda tutish lozim. 
+Striming vs blokli: ChatGPT API’dan striming rejimi bilan foydalanish mumkin (so‘rovga 
+stream=true  kiritiladi). Bu bot foydalanuvchi interfeysini tezlatadi — javob bo‘laklari olingan
+zahoti ekranga chiqariladi
+. Narx tomoni bilan striming yoki blokli formasida foydalanishdagi farqi
+yo‘q (hammasi token asosida) boʻlsa-da, foydalanuvchi uchun tezlik sezilarli. Strimingdan foydalanish
+uchun Python-da for  sikli orqali kelayotgan deltalarga quloq tutish mumkin
+. 
+Ollanadigan limitlar: OpenAI tomonidan joriy API uchun 60,000 so‘rov/min (yoki 60 mln token/min)
+kabi umumiy limitlar bor; lekin ular zich davr bo‘yicha kvantlash qilinadi (masalan, daqiqada 60k ni
+1000 so‘rov/sekund tarzida tatbiq etish)
+. Katta token so‘rovlar yoki sukunatli burstlarni oldini
+olish kerak. Kelajakda kerak bo‘lsa, yuqori tier (usage tier) ga o‘tish mumkin. 
+Manbalar: OpenAI rasmiy hujjatlari va yordam bo‘limi
+; ChatGPT striming dokumentatsiyasi
+.
+Bozor ma’lumotlari API’lari
+Haqiqiy bozor ma’lumotlarini olish uchun bir necha provayder mavjud. Quyida uchta asosiy misol keltiriladi:
+8
+• 
+4
+9
+5
+10
+7
+9
+5
+• 
+11
+• 
+12
+13
+14
+• 
+15
+15
+• 
+16
+13
+12
+15
+2
+
+
+Provayder
+Ma’lumot qamrovi
+Narx/cheklovlar va sharhlar
+Alpha
+Vantage
+Jahon aktsiyalari, valyuta, kripto; ko‘plab
+vaqt seriyalari (daily, intraday). Faqat REST
+(veb soket yo‘q). UZ bozor ma’lumotlari
+cheklangan.
+25 so‘rov/kungacha bepul (hozir), undan
+keyin premium rejalari: bosqichma-
+bosqich $49.99/oydan boshlab
+.
+API kaliti kerak.
+Finnhub
+Jahon aksiyalarining real vaqtda
+kotirovkalari, fundament va prognoz
+ma’lumotlari, iqtisodiy ko‘rsatkichlar,
+kripto. REST va WebSocket (real vaqt treyd
+kotirovkasi uchun).
+Bepul reja (har xil limitlar bilan); pullik
+rejalar $49.99/oydan boshlangan paketlar
+mavjud
+. API kaliti va autentifikatsiya
+talab qilinadi.
+EOD
+Historical
+Data
+Jahon aksiyalari (40+ bozor), ETF, kripto,
+indekslar. REST (kuni-kecha/real vaqtda).
+WebSocketdan foydalanmaydi.
+Bepul sinov; kun oxiri (EOD) va intraday
+ma’lumotlar $19.99/oydan, aralash
+paketlar qimmatroq
+. Keng qamrov,
+forex va fundamental uchun ham
+paketlari bor.
+Yodda tutingki, O‘zbekiston bozoridagi rasmiy ma’lumotlar endi Bloomberg orqali tarqatilmoqda,
+ammo erkin API mavjud emas (TSX uchun Bloomberg API-sohasi ochilgan boʻlsada, umumiy
+foydalanish uchun mavjud emas)
+. Aksiyalarning batafsil ma’lumotini olish uchun xalqaro
+provayderlar (masalan, Yahoo Finance — scraping orqali), broker API’lari (Alpaca, IBKR kabi, ular USD
+bozorida) yoki mahalliy brokerlar (Jett kabi mobil ilovalar) xizmatiga murojaat qilish kerak. 
+Manbalar: Alpha Vantage va Finnhub rasmiy hujjatlari
+; EODHD muhokamalari
+; TSX ma’lumotlari
+haqidagi maqola
+. 
+Skrinner dizayni va indikatorlar
+Indicatoryalar: Skrinner uchun mashhur texnik indikatorlar (SMA, EMA, RSI, MACD, Bollinger Bands,
+Stochastic, ADX va h.k.) qo‘llaniladi
+. Masalan, ta-lib  kutubxonasi Python uchun 200 dan ortiq
+indikatorni (ADX, MACD, RSI, Stochastic, Bollinger Bands, va hokazo) taqdim etadi
+. Bu algoritmlar
+orqali kurslar pozitsiyasi va o‘zgarishlar boshqariladi. 
+Vaqt oralig‘lari: Turli grafiglarda (soatlik, 4-soatlik, kunlik, haftalik) indikatorlar hisoblanadi. Soatlik
+yoki minutli (1M, 5M) ma’lumotlar real vaqt skrinning uchun foydali. Bundan tashqari, uzoq muddatli
+trendni aniqlash uchun kunlik kurslar ishlatiladi. 
+Foydalanuvchi qoidalari: Foydalanuvchilar skrinner qoidalarini o‘zlari belgilashi mumkin (masalan,
+“agar SMA20 > SMA50 bo‘lsa va RSI <30 bo‘lsa, sotib olish signali ber”). Qoidalar konfiguratsiya
+faylida saqlanib, kerak bo‘lganda qo‘lda yoki bot orqali yangilanishi mumkin. 
+Backtesting qo‘llab-quvvatlash: Yaratuvchilar oldindan belgilangan qoidalar va tarixiy ma’lumotlar
+asosida strategiyani backtest qilishi kerak. Pythonda Backtrader , zipline  yoki vectorbt
+kabi kutubxonalar yordamida strategiya test qilinadi. Bu orqali qoidalar ishchanligini va xavfsizligini
+baholash mumkin. 
+Risk-filtrlar va balans: Skrinner signallarini tozalash uchun qo‘shimcha shartlar (masalan, bozor
+likvidligi, volatillik kx, yangilik koeffitsienti) ishlatiladi. Bu pozitsiya hajmini belgilash va torkorning
+(drawdown) oldini olishga yordam beradi. 
+17
+18
+19
+20
+• 
+21
+22
+17
+18
+20
+21
+22
+• 
+23
+23
+• 
+• 
+• 
+• 
+3
+
+
+Manbalar: TA-Lib rasmiy saytida texnik indikatorlar ro‘yxati
+; backtesting kutubxonalari haqida jamoat
+manbalari. 
+Avtomatik yangilanish va jadvalga qo‘yish
+Cron va rejalashtirish: Agar botga muntazam yangilanish (masalan, har kuni grafikni yangilash)
+kerak bo‘lsa, cron-jobs (Linux crontab ) yoki Node-da node-cron  kabi paketlar yordamida vaqtga
+asoslangan vazifalarni sozlash mumkin. Misol: har kuni bozor yopilgandan so‘ng skrinnerni ishga
+tushirib, keyingi kun uchun signal yaratish. 
+Vazifa navbatlari va asinxronlik: Katta ma’lumotlar oqimini boshqarish uchun xabar navbati
+(RabbitMQ, Redis Queue yoki AWS SQS) ishlatiladi. Masalan, bozor API’dan kelgan ma’lumotni ilk
+tekshiruv uchun navbatga yuborish, fon jarayonida skrinner bloklariga qayta ishlov berish. 
+Hodisa-asosida triggerlar: Real-vaqt kurslar (websocket orqali) kelgan zahoti signallarni qayta
+hisoblash. Masalan, fini vaqti o‘zgargan qiymat bo‘yicha avtomatik bildirish jo‘natish uchun
+WebSocket hodisasi trigger bo‘lishi mumkin. yoki birja yangiliklari chiqqan zahoti stavkalarni qayta
+baholash. Bu tarzda "event-driven" muhitda ishlash foydali. 
+Manbalar: Texnik bloglar (Node cron masalalari); Telegram botlar bo‘yicha forumlar; AWS SQS/RabbitMQ
+dokumentatsiyasi. 
+Signal yaratish va xavf boshqaruvi
+Signal qoidalari: Misol uchun, “agar oxirgi 10 kunning o‘rtacha narxi (SMA10) 30 kunlik o‘rtacha
+narxdan baland bo‘lsa va RSI past (masalan, <30) bo‘lsa, sotib oling” kabi qoidalar tuziladi. Yoki
+“macd.sigoal kesib o‘tsin” kabi indikator signalari. Shu kabi bir nechta qatlamli filtrelar orqali soxta
+signallar kamaytiriladi. 
+Pozitsiya hajmi va risk-filtrlar: Har bir signal bilan birga tavsiya etilgan savdo hajmi hisoblanadi
+(masalan, portfelning 1–2% gacha). Masalan, Kelly formula yoki statik foiz usuli (masalan, 1% portfel)
+qo‘llanilishi mumkin. Noaniqlik va bozor shovqinini kamaytirish uchun signal peshinini tekshirish
+(masalan, oldingi signalga nisbatan salbiy hajm bo‘lsa bekor qilish) yoki issiq boshining ("cooldown")
+qoidasini (bir xil aktivga ortiqcha signallar orasida ma’lum vaqtdan keyin ruxsat) kiritish zarur. 
+Namuna: Masalan, “Sotib olish signal: SMA(20)>SMA(50) VA RSI<30 VA Ajanlik hajmi ko‘rsatkichi (ADX) >
+25”. “Sell signal: narx SMA(20) ostiga tushganda, yoki 50% foydani yig‘gach.” Bunday qoidalar code
+modulga kiritilib, har signal paytida tekshiriladi. 
+Manbalar: Algoritmik savdo bo‘yicha maqolalar; risolalar (backtesting va signallar haqida).
+Ko‘p API orkestratsiyasi
+Bot bir nechta tashqi servislarga ulanadi: Telegram API, ChatGPT API, bozor ma’lumotlari API, broker API.
+Masalan, foydalanuvchi buyruq yuborsa, avval ChatGPT API orqali so‘zma-so‘z tushuniladi, so‘ng bozor
+API’idan kerakli simbol ma’lumotlari olinadi, undan keyin skrinning qoidalari qo‘llanadi va natija broker
+API’iga (buyurtma berish uchun) va qayta Telegramga javob sifatida jo‘natiladi. Bunda hamma so‘rovlarni
+asinxon (async) usulda bajarish kerak; Node.js yoki Python async kutubxonalari yordam beradi. Har bir
+tashqi chaqiriq (ChatGPT, bozor, broker) maxsus modulda (service layer) qo‘llanadi. Turli API chaqiriqlari bir-
+biriga bog‘lanmasligi uchun qo‘shimcha state bazasi (masalan, Redis) yoki session ID’dan foydalanish lozim. 
+23
+• 
+• 
+• 
+• 
+• 
+• 
+4
+
+
+Manbalar: Dasturiy arxitektura qo‘llanmalari; Node.js/Python integratsiya bloglari. 
+Xavfsizlik va maxfiylik
+API kalitlarini saqlash: Sirli kalitlarni (Telegram tokeni, OpenAI API kaliti, bozor API kaliti) hech
+qachon kod ichiga bevosita yozmaslik kerak
+. Ularni atrof-muhit o‘zgaruvchilari yoki maxfiylik
+boshqaruv xizmatida (AWS Secrets Manager, Kubernetes Secrets va h.k.) saqlash yaxshi amaliyotdir
+. Maksimal kam huquq (principle of least privilege) tamoyiliga amal qilib, har bir kalit faqat
+kerakli maqsad uchun ruxsat berilishi lozim. Kalitlarni va’dadan chiqishsiz aylantirib turish (rotatsiya)
+kerak. 
+Foydalanuvchi autentifikatsiyasi: Bot kerak bo‘lsa, login/auth tizimi qo‘shilishi mumkin; masalan,
+foydalanuvchi Telegram ID asosida ruxsat tekshiruvi. Privacy uchun FCM (Flood Control modul) lar
+ornatib, botga faqat registratsiyadan o‘tgan foydalanuvchilar kirishini ta’minlash lozim. 
+Rate limiting: ChatGPT va bozor API’ga so‘rovlar soni cheklangan. Botda o‘z ichida ham bot
+serveriga qarshi DoS hujumlari oldini olish uchun IP bo‘yicha cheklov o‘rnatish va spam-proteksiya
+qilish zarur. Misol uchun, bir foydalanuvchi bir daqiqada ko‘p xabar jo‘natishi muammoga sabab
+bo‘lishi mumkin, shuning uchun masalan Redis orqali vaqtinchalik ana shu foydalanuvchining
+so‘rovlar sonini cheklash mumkin. 
+Ma’lumotlar maxfiyligi: Foydalanuvchilarning buyruqlari va javoblari (ayniqsa, moliyaviy maslahat)
+shifrlanishini ta’minlash uchun HTTPS kerak. Bot server loglariga foydalanuvchi shaxsiy
+ma’lumotlarini tushirmaslik (token, maxfiy so‘rov matni va h.k.) talab qilinadi. 
+Manbalar: Stripe xavfsizlik qo‘llanmalaridan xulosa
+; umumiy API xavfsizlik amaliyotlari. 
+Joylashtirish, monitoring va xarajatlar
+Joylashtirish: Tanlangan hostingga kodni CI/CD bilan joylashtirish. Misol: GitHub Actions + Docker +
+AWS (ECR+ECS yoki Lambda) yoki Doctl/DigitalOcean CLI. Yagona kontener (Docker Compose)dan
+kubernetes (EKS/GKE)gacha variantlar. Har xil muhit (dev, stage, prod) o‘zgaruvchilar bilan
+boshqariladi. Flask yoki Node botlarini pm2  yoki gunicorn  yordamida ishga tushurish mumkin.
+HTTPS sertifikatlarini avtomatik yangilash (Let’s Encrypt) lozim. 
+Monitoring: Bot ish faoliyatini kuzatish uchun log va metrikalar tizimi o‘rnatish – masalan,
+Prometheus+Grafana, yoki Papertrail/Sentry kabi xizmatlar. Metrikalar: so‘rovlar soni, javob berish
+vaqti, xatoliklar (5xx kodlari). Alert qoida sifatida ChatGPT API limitiga yetganda/bozor ma’lumotlari
+offline bo‘lganda ogohlantirish e’lon qilishi kerak. 
+Xarajatlar: Xizmatlar narxlari taxminiy hisoblanadi. Masalan, 
+Telegram Bot: o‘zingizning infrastrukturangizda ($5/oy boshlang‘ich VPS) yoki serverless-da (AWS
+Lambda: 1M bepul so‘rov, keyin ~$0.000000208/so‘rov) yuritish mumkin
+. Cloudflare Workers-
+da 100k so‘rov/gacha kuniga bepul, keyin $5/1M so‘rov darajasida. 
+ChatGPT API: GPT-4 narxi ~ $0.03/1000 token (yoki GPT-3.5 ~ $0.002/1K token). Har bir so‘rovga
+ishlatilgan tokenlar (bufer + javob) miqdori bo‘yicha to‘lanadi. Tejash uchun kerakli joyda faqat kerakli
+model va minimal tokendan foydalanish zarur. 
+Bozor API: Alpha Vantage bepul juda cheklangan (25/kun)
+, keyingi bosqichlaridan boshlab (~$50/
+oy); Finnhub bepul cheklangan, $50/oydan boshlangan paketlari bor
+. EODHD bosh rejasi ~$29/
+oydan boshlanadi
+. 
+Server/Infra: VPS ~ $5–10/oy; CloudRun/Heroku kabi xizmatlar esa kichik loyihalar uchun 10$ atrofida.
+AWS Lambda da yuqoridagi limitlardan ketmasa, qariyb bepul ishlaydi. 
+• 
+24
+24
+• 
+• 
+• 
+24
+• 
+• 
+• 
+• 
+2
+1
+• 
+• 
+17
+19
+20
+• 
+5
+
+
+Brokers: (Agar avtomatik savdo qilinsa) Alpaca hozir $0 komissiya (faqat AQSH bozorida); boshqa
+brokerlar (IBKR, Oanda) esa to‘lov aniq e’lon qilgan. 
+Manbalar: Cloudflare narx va AWS Lambda tariflari
+; ChatGPT narxlari (OpenAI saytida) va bozor API
+bo‘yicha tijoriy takliflar
+.
+Zarur komponentlar va ma’lumot oqim diagrammasi
+Loyihada quyidagi komponentlar bo‘ladi: Telegram Bot (HTTPS webhook), ChatGPT API moduli, Bozor
+ma’lumotlari API moduli, broker API moduli, ma’lumotlar bazasi (signal va sozlamalar uchun), jadval/
+reklama (cron yoki navbat) xizmatlari. Ma’lumot oqimi quyidagicha: foydalanuvchi Telegram’da xabar
+jo‘natadi → Telegram server bot endpoint’iga webhooks orqali yuboradi → Bot server xabarni qabul qilib,
+tegishli bo‘limlarga (ChatGPT, bozor API, broker API) so‘rov qiladi → olgan javoblarni birlashtirib, signal
+hisoblaydi → natijani Telegram orqali foydalanuvchiga qaytaradi. Pastdagi Mermaid diagrammada bu
+jarayon tasvirlangan: 
+flowchart LR
+    U[Telegram foydalanuvchisi] -->|Xabar yuboradi| TB[Telegram Bot API]
+    TB -->|Webhook so‘rovi| Srv[Bot server (Docker/AWS Lambda)]
+    Srv -->|so‘rov: ChatGPT API| GPT
+    Srv -->|so‘rov: Bozor API| MD
+    Srv -->|so‘rov: Broker API| BR
+    GPT --> Srv
+    MD --> Srv
+    BR --> Srv
+    Srv -->|signal saqlash| DB[(Ma’lumotlar bazasi)]
+    Srv -->|javob yuborish| TB
+Bu yerda ChatGPT API dan foydalanuvchi so‘rovini qayta ishlash, bozor API’dan narx ma’lumotlari olish,
+broker API orqali bozor buyurtmalari berish ketma-ketligi ko‘rsatilgan. DB da signal va foydalanuvchi
+qoidalari saqlanadi. 
+Amalga oshirish bosqichlari (timeline)
+Loyihani bosqichma-bosqich amalga oshirish uchun quyidagi tartib tavsiya etiladi:
+1. Talablar aniqlash va reja tuzish: Arxitektura variantlarini tanlash, komponentlar ro‘yxatini aniqlash.
+2. Muhit sozlash: Git repozitoriy yarating, Docker yoki loyiha muhiti konfiguratsiyasi, zarur kutubxonalarni
+o‘rnatish (Python/Node paketlari, OpenAI SDK, ta-lib va h.k.).
+3. Telegram webhookni ishlab chiqish: Eng oddiy “Salom Dunyo” botini yaratib, Webhook orqali xabar
+oladigan endpoint yozing. Masalan, Flask’da @app.route('/', methods=['POST'])  bilan handler
+yozish. (Quyidagi kod misolida Python ishlatilgan.)
+4. ChatGPT integratsiyasi: OpenAI API ga ulanishni tashkil qiling. Foydalanuvchi xabarini ChatGPT ga jo‘rib,
+olgan javobni qaytaring (socket optionlari bilan). Test qiling: oddiy savollarga ChatGPT javob beradi.
+5. Bozor ma’lumotlari moduli: Tanlangan ma’lumot provayderi (masalan, Finnhub) API’dan oddiy so‘rov
+qilib, amaldagi narxlarni oling. REST so‘rovni amalga oshirish va JSON parse qiling. WebSocket kerak bo‘lsa,
+vidjet bilan ulanishni tashkil qiling (Python’da websocket-client  kabi).
+• 
+2
+1
+17
+18
+6
+
+
+6. Skrinner logikasini qo‘shish: Texnik indikatorlar uchun TA-Lib (yoki pandas-va-s) ishlating, skrinner
+qoidalarini kodlang. Tarixiy ma’lumotga asoslangan test (backtest) skripti yarating.
+7. Jadval va avtomatik yangilanish: Cron yoki node-cron  yordamida ma’lumotlarni muntazam
+yangilaydigan modul qo‘shing. Masalan, har kuni ertalab soat 6:00 da bozorni tekshirish.
+8. Xavfsizlik tadbirlari: API kalitlarini .env faylidan yoki maxfiy xizmatdan olinganligini tekshirish.
+Qo‘shimcha foydalanuvchi autentifikatsiyasi kerak bo‘lsa, kodni qo‘shing. Rate-limiting kutubxonasini
+(masalan, Python uchun ratelimit  yoki Node uchun express-rate-limit ) o‘rnatish.
+9. Test va sozlash: Unit-test va integratsion testlarni yozing. ChatGPT javoblarini simulyatsiya qiling (mock)
+va noto‘g‘ri keying so‘rovlarni tekshiring. Xatolik yuz berganda qanday qayta urinuv, logging bo‘lsin. 
+10. Joylashtirish va monitoring: Loyiha tayyor bo‘lgach, bosqichma-bosqich prod muhiti qurish (masalan,
+AWS ECR + ECS yoki Lambda). Boshqaruv paneli va log to‘plovchi (Sentry, ELK) tizimini ishga tushiring. 
+Har bir bosqichga belgilangan muddat (hafta yoki oy) ajratib, aniq yil va oy bilan belgilangan jadval tuzing.
+Masalan: 1-hafta: muhit va webhook, 2-hafta: ChatGPT integratsiyasi, 3-hafta: bozor APIlar va skrinner, 4-hafta:
+xavfsizlik va testlar, 5-hafta: joylashtirish va monitoring.
+Test rejası
+Unit-testlar: Har bir alohida modul uchun test yozing (masalan, bozor API javobini parslash,
+skrinner qoidalarini tekshirish). Python uchun unittest  yoki pytest , Node.js uchun Jest/
+Mocha . 
+Integratsion testlar: Butun tizim integratsiyasi: Telegram xabar yuborilganda kutilgan natija
+qaytishini tekshirish. ChatGPT chaqiruvi va bozor API javobini simulyatsiya qilish (mock) bilan bot
+ishini sinash. 
+Yuk va barqarorlik testi: Agar kutilgan foydalanuvchi soni baland bo‘lsa, so‘rov tezligi oshirilgan
+holatda bot barqarorligini kuzating. Simulyatsiya qilingan trafik bilan yuk sinovi o‘tkazing. 
+Backtesting va strategiya testi: Tarixiy ma’lumotlar bilan skrinner qoidalarini sinovdan o‘tkazing.
+Bu orqali strategiya samaradorligini baholang va parametrlarni sozlang. 
+Ma’lumot provayderlari va hosting variantlari taqqoslash
+Ma’lumot provayderlari (3 ta):
+Provayder
+Asosiy xususiyatlar
+Narx va chegara
+Izohlar (pros/cons)
+Alpha
+Vantage
+Jahon aktsiyalari, forex,
+kripto; REST API (intraday,
+historical); real-vaqt bor
+(NASDAQLicense).
+25 so‘rov/kun (bepul)
+; premium reja
+$49.99/oy (75 req/min)
+bosqichidan yuqoriga
+.
+Afzallik: Keng qamrov, oson
+integratsiya, ko‘p indikator. 
+Kamchilik: Bepul juda
+cheklangan, yuqori trafikda
+qimmat.
+Finnhub
+Global aksiyalar, forex,
+kripto ma’lumotlari; REST
+va WebSocket qo‘llab-
+quvvatlanadi.
+Bepul reja (ma’lum
+limit bilan); pullik reja
+$49.99/oydan
+boshlangan
+.
+Afzallik: Bepul real-vaqt
+ma’lumot, keng bozor qamrovi. 
+Kam: Bepul chegarasi aniq
+bo‘lmasligi, pullik rejalar bozor
+va ma’lumot turiga qarab turli
+(disaggregated)
+.
+• 
+• 
+• 
+• 
+17
+18
+19
+19
+7
+
+
+Provayder
+Asosiy xususiyatlar
+Narx va chegara
+Izohlar (pros/cons)
+EOD
+Historical
+40+ mamlakat aksiyalari,
+forex, kripto; REST (daily,
+EOD/15min delyed real
+vaqtda).
+Bepul sinovli reja; EOD
+global $19.99/oy,
+EOD+Intraday $29.99/
+oy
+.
+Afzallik: Keng global qamrov,
+oson to‘la foydalanish. Kam:
+WebSocket yo‘q, asosiy
+ma’lumotlar kechiktirilgan (real-
+vaqt emas).
+Hosting variantlari (3 ta):
+Variant
+Afzalliklari
+Kamchiliklari (va xarajat)
+AWS Lambda
+(Serverless)
+– Faol bo‘lmaganida xarajat yo‘q
+(faqat ishlatilgan vaqti uchun
+to‘lanadi)
+. 1M ta bepul so‘rov/oy
+(keyin mikronsarflar). – Auto-
+shkalalanadi, bo‘sh zada servis
+ishlatmaydi.
+– Cold start bo‘lishi mumkin (AWS Lambda
+~800-2500ms)
+. – Uzluksiz vazifa uchun
+qimmatlashishi mumkin (bir million
+so‘rovdan ko‘proq). Masalan, ko‘p trafikda har
+oy $10-$20 dan oshishi mumkin.
+DigitalOcean
+Droplet (VPS)
+– To‘liq nazorat (istalgan modulni
+o‘rnatish). – Har doim yoqilgan
+server, barebones texnika. – Doimiy
+$5/oy (eng kichik reja) turboshaytga
+ega
+.
+– Ishlamayotgan vaqt ham $5 to‘lanadi. –
+Traffic oshganda qo‘l bilan skalarni oshirish
+(ko‘p hollarda balancer va bir nechta droplet
+kerak). – Qo‘shimcha xizmatlar (tarjimon, TLS
+sertifikat) o‘rnatish kerak.
+Cloudflare
+Workers
+(Edge)
+– Dunyoni bo‘ylab tarqatilgan
+infratuzilma (300+ joyda ma’lumot
+markazi)
+. Cold start 5ms
+atrofida, deyarli yo‘q
+. – Kundalik
+100k ta bepul so‘rov (ko‘pgina
+loyihalar uchun bepul)
+. – HTTP
+webhook-lar uchun ideal: minimal
+kechikish, arzon.
+– Cheklov: Har so‘rov uchun CPU va boshqa
+resurslar qisqa muddatga chegaralangan.
+Katta hisoblash yuklari (rasmni o‘zgartirish,
+audio-video) mos emas. – Bir vaqtning o‘zida
+uzoq WebSocket aloqasi qiyin (odatda
+qo‘llab-quvvatlanmagan)
+. – Faqat
+JavaScript (V8) muhit; ba’zi kutubxonalar
+ishlamasligi mumkin.
+Izoh: Har bir variantning afzalliklari va kamchiliklari vaziyatga qarab tahlil qilinishi kerak. Serverless
+(Lambda yoki Workers) kichik loyihalar va burst-yuklar uchun arzon, lekin doimiy katta trafikli ilovalar uchun
+doimiy VPS yoki konteyner arzon tushadi
+.
+Kod namunalari
+1) Telegram Webhook (Python, Flask):
+from flask import Flask, request
+import os, requests
+app = Flask(__name__)
+BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
+20
+1
+3
+1
+25
+3
+2
+26
+1
+2
+8
+
+
+@app.route('/webhook', methods=['POST'])
+def handle_update():
+data = request.json
+chat_id = data['message']['chat']['id']
+text = data['message'].get('text', '')
+# ChatGPT orqali javob olish (keyingi misolda)
+reply = ask_chatgpt(text)
+# Telegram sendMessage chaqiruvi
+resp = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/
+sendMessage",
+json={"chat_id": chat_id, "text": reply})
+return {"ok": True}
+def ask_chatgpt(user_text):
+# OpenAI API orqali chat yakuni olish
+import openai
+openai.api_key = os.getenv("OPENAI_API_KEY")
+response = openai.ChatCompletion.create(
+model="gpt-3.5-turbo",
+messages=[{"role": "user", "content": user_text}]
+)
+return response['choices'][0]['message']['content']
+# Flask serverni ishga tushirish
+if __name__ == '__main__':
+app.run(port=5000)
+Bu kod TelegramBotFather dan olgan token bilan /webhook  endpoint’ida Telegram xabarlarini qabul
+qiladi. Foydalanuvchi xabarini ChatGPT so‘roviga uzatib, olingan javobni Telegramga qaytaradi.
+2) ChatGPT API chaqiruv (Python):
+import openai
+openai.api_key = os.getenv("OPENAI_API_KEY")
+def get_gpt_response(question):
+messages = [
+{"role": "system", "content": "Siz tajribali moliyaviy 
+maslahatchisiz."},
+{"role": "user", "content": question}
+]
+response = openai.ChatCompletion.create(
+model="gpt-4",
+messages=messages,
+max_tokens=300,
+# kerakli javob uzunligini limitlash
+9
+
+
+temperature=0.7,
+n=1
+)
+answer = response.choices[0].message.content.strip()
+return answer
+# Foydalanish misoli:
+question = "O‘zbekiston aksiyalari bozoridagi yangi IPO haqida ma'lumot bering."
+print(get_gpt_response(question))
+Bu misolda ChatGPT (GPT-4) modeli so‘roviga javob olinyapti. temperature  va max_tokens  parametrlar
+ekranni boshqarish va xarajatni optimallashtirishga yordam beradi.
+3) Market Data WebSocket (Python, Finnhub misol):
+import websocket
+import json
+import os
+FINNHUB_TOKEN = os.getenv("FINNHUB_API_KEY")
+url = f"wss://ws.finnhub.io?token={FINNHUB_TOKEN}"
+def on_message(ws, message):
+data = json.loads(message)
+print("Real-time ma'lumot:", data)
+def on_open(ws):
+# Masalan, AAPL bo‘yicha obuna bo‘lish
+subscribe_msg = {"type": "subscribe", "symbol": "AAPL"}
+ws.send(json.dumps(subscribe_msg))
+ws = websocket.WebSocketApp(url, on_open=on_open, on_message=on_message)
+ws.run_forever()
+Bu kod Finnhub’dan WebSocket orqali real vaqtda AAPL  aksiyasi bo‘yicha ma’lumot oladi va konsolga
+chiqaradi. Boshqa bozor API’lar uchun ham xuddi shunday WebSocket ma’lumotlari bo‘lsa, ulanish o‘xshash
+tarzda amalga oshiriladi.
+4) Cron vazifasi (Node.js misol):
+const cron = require('node-cron');
+const axios = require('axios');
+const BOT_TOKEN = process.env.TELEGRAM_TOKEN;
+// Har kuni soat 09:00 da ruxsat berilgan guruhga xabar jo'natish
+10
+
+
+cron.schedule('0 9 * * *', async () => {
+await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+chat_id: '@sizning_guruh_id',
+text: 'Xayrli tong! Bozorni kuzatish tayyor.'
+});
+console.log('Ertalabki xabar yuborildi.');
+});
+Node.js node-cron  kutubxonasi yordamida har kuni soat 09:00 da Telegram guruhiga xabar yuborish
+misoli. Cron jumlasi minute hour day-of-month month day-of-week .
+5) Skrinner qoidasi misoli (Python):
+import talib
+import numpy as np
+# Faraz qilaylik narx ma'lumotlarini oldik: datetime va ochilash-yopilish 
+royhatlarda
+close_prices = np.array([100, 102, 101, 105, 107, 104, 109, 111, 115, 113])
+sma_short = talib.SMA(close_prices, timeperiod=5)
+sma_long
+= talib.SMA(close_prices, timeperiod=10)
+rsi = talib.RSI(close_prices, timeperiod=14)
+if sma_short[-1] > sma_long[-1] and rsi[-1] < 30:
+print("Sotib olish signali")
+elif sma_short[-1] < sma_long[-1] and rsi[-1] > 70:
+print("Sotish signali")
+else:
+print("Signal yo'q")
+Bu misolda 5 va 10 kunlik o‘rtacha (SMA) hamda RSI texnik ko‘rsatkichlariga qarab signallar chiqarilgan. TA-
+Lib yordamida hisoblangan ko‘rsatkichlar shartlar bilan solishtiriladi.
+Izoh: Kodlardagi process.env  yoki os.getenv  orqali atrof-muhit o‘zgaruvchilaridan kalitlarni olish
+xavfsizlik jihatdan to‘g‘ri
+. 
+Serverless vs. Containers: Pros, Cons, and How to Choose One
+https://www.dnsstuff.com/serverless-vs-containers
+Why Cloudflare Workers Is the Best Runtime for AI Chat Bots | getclaw
+https://getclaw.sh/blog/why-cloudflare-workers-for-telegram-bots
+Long Polling vs Webhook — How Telegram Bots Receive Updates | GramIO
+https://gramio.dev/updates/webhook
+24
+1
+2
+3
+25
+26
+4
+6
+7
+8
+9
+10
+11
+
+
+Serverless Telegram bot – sampo.website
+https://sampo.website/blog/en/2025/serverless-tg-bot/
+What are the best practices for managing my rate limits in the API? | OpenAI Help Center
+https://help.openai.com/en/articles/6891753-what-are-the-best-practices-for-managing-my-rate-limits-in-the-api
+Rate limits | OpenAI API
+https://developers.openai.com/api/docs/guides/rate-limits
+Streaming API responses | OpenAI API
+https://developers.openai.com/api/docs/guides/streaming-responses
+Customer Support | Alpha Vantage
+https://www.alphavantage.co/support/
+The 2026 Market Data API Scorecard: Comparing 6 Leading Providers | EODHD APIs Academy
+https://eodhd.com/financial-academy/financial-faq/the-2026-market-data-api-scorecard-comparing-6-leading-providers
+Tashkent Stock Exchange Connects to Bloomberg via API for Real-Time Data - Kursiv Media Uzbekistan
+https://uz.kursiv.media/en/2025-07-01/tashkent-stock-exchange-connects-to-bloomberg-via-api-for-real-time-data/
+Stock Market Overview Uzbekistan | stockscope.uz
+https://stockscope.uz/en
+TA-Lib - Technical Analysis Library
+https://ta-lib.org/
+docs.stripe.com
+https://docs.stripe.com/keys-best-practices
+5
+11
+13
+14
+16
+12
+15
+17
+18
+19
+20
+21
+22
+23
+24
+12

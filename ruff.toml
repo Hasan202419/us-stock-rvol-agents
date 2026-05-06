@@ -1,3 +1,5 @@
+# Run from this repo: `ruff check agents dashboard.py strategy_core src tests scripts` (matches CI).
+# Do not run `ruff check` with no path from %USERPROFILE%; it will traverse stdlib and Downloads.
 line-length = 120
 target-version = "py312"
 exclude = [".venv", ".git"]

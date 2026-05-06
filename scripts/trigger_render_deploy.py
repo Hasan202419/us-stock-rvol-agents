@@ -1,10 +1,9 @@
-"""Trigger a Render Web Service deploy.
+"""Trigger Render deploy(s).
 
-Priority (first match wins):
-  1) RENDER_DEPLOY_HOOK_URL — Service → Settings → Build & Deploy → Deploy Hook (full POST URL).
-     Use this in CI (GitHub secret) instead of exposing API keys + service IDs.
-  2) RENDER_API_KEY + RENDER_SERVICE_ID — REST `POST .../deploys`
-     (`load_project_env` resolves empty RENDER_SERVICE_ID when RENDER_API_KEY is set).
+1) ``RENDER_DEPLOY_HOOK_URL`` — Web Dashboard → Deploy Hook (POST).
+   Ixtiyoriy: ``RENDER_WORKER_DEPLOY_HOOK_URL`` — Telegram worker hook (ikkinchi POST).
+2) ``RENDER_API_KEY`` + ``RENDER_SERVICE_ID`` — REST deploy.
+   Ixtiyoriy: ``RENDER_WORKER_SERVICE_ID`` yoki ``--worker-service-id`` — ikkinchi worker deploy.
 
 Usage:
   python scripts/trigger_render_deploy.py
@@ -38,13 +37,14 @@ def main() -> int:
         help="Render service ID (default: RENDER_SERVICE_ID from .env)",
     )
     parser.add_argument(
-        "--clear-cache",
-        action="store_true",
-        help="Pass clearCache=clear (slows first build, fixes stale dependency caches).",
+        "--worker-service-id",
+        default=os.getenv("RENDER_WORKER_SERVICE_ID", "").strip(),
+        help="Optional second service (Telegram worker) for REST API path.",
     )
     args = parser.parse_args()
 
     hook = os.getenv("RENDER_DEPLOY_HOOK_URL", "").strip()
+    worker_hook = os.getenv("RENDER_WORKER_DEPLOY_HOOK_URL", "").strip()
     if hook:
         if args.clear_cache:
             print(
@@ -52,7 +52,7 @@ def main() -> int:
                 file=sys.stderr,
             )
         response = requests.post(hook, timeout=60)
-        print(f"deploy hook http {response.status_code}", flush=True)
+        print(f"deploy hook (web) http {response.status_code}", flush=True)
         if response.text:
             try:
                 print(response.text[:2000], flush=True)
@@ -60,6 +60,16 @@ def main() -> int:
                 pass
         if not (200 <= response.status_code < 300):
             return 1
+        if worker_hook:
+            w = requests.post(worker_hook, timeout=60)
+            print(f"deploy hook (telegram worker) http {w.status_code}", flush=True)
+            if w.text:
+                try:
+                    print(w.text[:2000], flush=True)
+                except Exception:
+                    pass
+            if not (200 <= w.status_code < 300):
+                return 1
         return 0
 
     key = os.getenv("RENDER_API_KEY", "").strip()
@@ -94,6 +104,27 @@ def main() -> int:
         pass
     if response.status_code not in (201, 202):
         return 1
+
+    worker_sid = (args.worker_service_id or "").strip()
+    if worker_sid:
+        response2 = requests.post(
+            f"https://api.render.com/v1/services/{worker_sid}/deploys",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json=body if body else None,
+            timeout=60,
+        )
+        print(f"api (worker) http {response2.status_code}", flush=True)
+        try:
+            print(response2.text[:2000], flush=True)
+        except Exception:
+            pass
+        if response2.status_code not in (201, 202):
+            return 1
+
     return 0
 
 

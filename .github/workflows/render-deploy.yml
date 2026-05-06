@@ -1,8 +1,9 @@
 # Push to main yoki qo'lda: Render Web Service deploy navbatiga qo'shiladi.
 #
 # GitHub → repo → Settings → Secrets and variables → Actions:
-#   VARIANT A (tavsiya): RENDER_DEPLOY_HOOK_URL — Dashboard → Service → Build & Deploy → Deploy Hook (to'liq URL)
-#   VARIANT B: RENDER_API_KEY + RENDER_SERVICE_ID (srv-...)
+#   VARIANT A (tavsiya): RENDER_DEPLOY_HOOK_URL — Web service Deploy Hook (to'liq POST URL)
+#   Ixtiyoriy: RENDER_WORKER_DEPLOY_HOOK_URL — Telegram worker uchun alohida hook (iksini ham yangilash kerak bo'lsa)
+#   VARIANT B: RENDER_API_KEY + RENDER_SERVICE_ID — faqat BIR srv; worker uchun ikkinchi deploy: workflow ga hook qo'shing yoki Dashboarddan qo'lda redeploy.
 #
 # Forklarda Secret bo'lmasa push paytida bosqich ovozsiz o'tkazib yuboriladi.
 # workflow_dispatch da Secret bo'lmasa ish yiqiladi (noto'g'ri sozlash).
@@ -14,14 +15,17 @@ on:
   push:
     branches: [main, master]
     paths:
+      - ".github/workflows/render-deploy.yml"
       - "dashboard.py"
       - "requirements.txt"
       - "render.yaml"
+      - ".env.example"
       - "agents/**"
       - "src/**"
       - "pages/**"
       - "strategy_core/**"
       - "scripts/**"
+      - "docs/**"
 
 jobs:
   deploy:
@@ -32,23 +36,48 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          WORKER_HOOK: ${{ secrets.RENDER_WORKER_DEPLOY_HOOK_URL }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
           set -euo pipefail
+
+          fired_web=0
           if [[ -n "${HOOK:-}" ]]; then
             code=$(curl -sS -o /tmp/render_deploy_body.txt -w "%{http_code}" -X POST "$HOOK") || code="000"
-            echo "deploy hook HTTP $code"
+            echo "deploy hook (web) HTTP $code"
             head -c 2000 /tmp/render_deploy_body.txt 2>/dev/null || true
             echo ""
             if [[ "$code" -ge 200 && "$code" -lt 300 ]]; then
-              exit 0
+              fired_web=1
+            else
+              if [[ "$EVENT" != "workflow_dispatch" ]]; then
+                echo "::warning::Web deploy hook returned $code — check Render dashboard."
+              else
+                exit 1
+              fi
             fi
-            if [[ "$EVENT" != "workflow_dispatch" ]]; then
-              echo "::warning::Deploy hook returned $code — check Render dashboard."
-              exit 0
+          fi
+
+          if [[ -n "${WORKER_HOOK:-}" ]]; then
+            code=$(curl -sS -o /tmp/render_worker_body.txt -w "%{http_code}" -X POST "$WORKER_HOOK") || code="000"
+            echo "deploy hook (telegram worker) HTTP $code"
+            head -c 2000 /tmp/render_worker_body.txt 2>/dev/null || true
+            echo ""
+            if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
+              if [[ "$EVENT" == "workflow_dispatch" ]]; then
+                exit 1
+              fi
+              echo "::warning::Worker deploy hook returned $code — check Render dashboard."
             fi
-            exit 1
+          fi
+
+          if [[ "$fired_web" -eq 1 ]]; then
+            exit 0
+          fi
+
+          if [[ -n "${HOOK:-}" ]]; then
+            exit 0
           fi
 
           if [[ -n "${RENDER_API_KEY:-}" && -n "${RENDER_SERVICE_ID:-}" ]]; then
@@ -72,7 +101,7 @@ jobs:
           fi
 
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
-            echo "No secrets: set RENDER_DEPLOY_HOOK_URL or RENDER_API_KEY + RENDER_SERVICE_ID"
+            echo "No secrets: set RENDER_DEPLOY_HOOK_URL (+ optional RENDER_WORKER_DEPLOY_HOOK_URL) or RENDER_API_KEY + RENDER_SERVICE_ID"
             exit 1
           fi
           echo "Skip Render deploy: no HOOK/API secrets configured."
