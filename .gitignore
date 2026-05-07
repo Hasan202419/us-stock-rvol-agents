@@ -8,3 +8,7 @@ logs/
 __pycache__/
 *.pyc
 state/
+
+.env.bak
+
+*.bak
