@@ -26,6 +26,29 @@ if str(_PROJECT_ROOT) not in sys.path:
 from agents.bootstrap_env import ensure_env_file, load_project_env  # noqa: E402
 
 
+def _render_env_help(extra: str = "") -> None:
+    env_path = _PROJECT_ROOT / ".env"
+    base = (
+        "Render uchun `.env` faylda quyidagidan BIR VARIANT bo'lishi kerak:\n\n"
+        "VARIANT A (tavsiya): Dashboard → WEB service (`us-stock-rvol-dashboard`) → "
+        "Settings → Build & Deploy → Deploy Hook — to'liq URL ni nusxa oling va `.env`ga qo'shing:\n"
+        "  RENDER_DEPLOY_HOOK_URL=https://api.render.com/deploy/srv-xxxx?key=yyyy\n\n"
+        "Telegram worker alohida servis → uning Deploy Hook ham (ixtiyoriy):\n"
+        "  RENDER_WORKER_DEPLOY_HOOK_URL=https://api.render.com/deploy/...\n\n"
+        "VARIANT B: Account → API Keys → Render API kaliti va WEB service ID (srv-...):\n"
+        "  RENDER_API_KEY=rnd_xxxxx\n"
+        "  RENDER_SERVICE_ID=srv-xxxx\n"
+        "Ixtiyoriy worker uchun:\n"
+        "  RENDER_WORKER_SERVICE_ID=srv-xxxx\n\n"
+        f"`.env` manzili: {env_path}\n"
+        f"(So'zlandi: MASTER_PLAN yoki boshqa joydagi aktiv qator `.env`ga ko'chirish kerak.)"
+    )
+    if extra:
+        print(extra, file=sys.stderr)
+        print("", file=sys.stderr)
+    print(base, file=sys.stderr)
+
+
 def main() -> int:
     ensure_env_file(_PROJECT_ROOT)
     load_project_env(_PROJECT_ROOT)
@@ -40,6 +63,11 @@ def main() -> int:
         "--worker-service-id",
         default=os.getenv("RENDER_WORKER_SERVICE_ID", "").strip(),
         help="Optional second service (Telegram worker) for REST API path.",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Pass clearCache=clear for REST API deploy (ignored for Deploy Hook).",
     )
     args = parser.parse_args()
 
@@ -74,13 +102,10 @@ def main() -> int:
 
     key = os.getenv("RENDER_API_KEY", "").strip()
     if not key:
-        print("Set RENDER_DEPLOY_HOOK_URL or RENDER_API_KEY in .env", file=sys.stderr)
+        _render_env_help("RENDER_DEPLOY_HOOK_URL bo'sh — lekin REST uchun RENDER_API_KEY ham yo'q.")
         return 1
     if not args.service_id:
-        print(
-            "Set RENDER_SERVICE_ID in .env, pass --service-id, or use RENDER_DEPLOY_HOOK_URL.",
-            file=sys.stderr,
-        )
+        _render_env_help("RENDER_DEPLOY_HOOK_URL yo'qligi uchun REST ishlatyapsiz — lekin RENDER_SERVICE_ID bo'sh.")
         return 1
 
     body: dict[str, str] = {}

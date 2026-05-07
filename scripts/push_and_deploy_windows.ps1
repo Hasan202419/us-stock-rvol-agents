@@ -36,12 +36,23 @@ if (-not $DeployOnly) {
         Write-Log "ERROR: git topilmadi."
         exit 10
     }
-    if (-not (Test-Path (Join-Path $RepoRoot ".git"))) {
-        Write-Log "ERROR: .git yo'q — Cursor workspace nusxa bo'lishi mumkin; asosiy papkada ishga tushiring."
-        exit 11
-    }
+    $badRemote = $false
+    try {
+        $originUrl = (git remote get-url origin 2>$null).Trim()
+        if ($originUrl) {
+            Write-Log "git remote origin = $originUrl"
+            if ($originUrl -match '(?i)(YOUR_|PLACEHOLDER|example\.github\.io|your_login|your_repository)') {
+                $badRemote = $true
+            }
+        }
+    } catch { }
 
-    git add -A 2>&1 | ForEach-Object { Write-Log "git_add: $_" }
+    if ($badRemote) {
+        Write-Log "ERROR: 'origin' hali namuna URL — GitHubdagi HA QI REPO manziliga almashtiring:"
+        Write-Log "  git remote set-url origin https://github.com/SIZNING_USER/us-stock-rvol-agents.git"
+        Write-Log "Keyin GitHubda shu nomli repo yarating (yoki mavjud reponing URL ini qo'ying)."
+        exit 16
+    }
     $dirty = git status --porcelain 2>$null
     if (-not [string]::IsNullOrWhiteSpace($dirty)) {
         git commit -m $CommitMessage 2>&1 | ForEach-Object { Write-Log "git_commit: $_" }
@@ -62,7 +73,11 @@ if (-not $DeployOnly) {
 
     git push -u origin $Branch 2>&1 | ForEach-Object { Write-Log "git_push: $_" }
     if ($LASTEXITCODE -ne 0) {
-        Write-Log "ERROR: git push muvaffaqiyatsiz — remote/PAT tekshiring (exit=$LASTEXITCODE)"
+        Write-Log "ERROR: git push muvaffaqiyatsiz (exit=$LASTEXITCODE)"
+        Write-Log "Agar 'Repository not found' bo'lsa: remote URL noto'g'ri yoki GitHubda repo yo'q / kalit yo'q."
+        Write-Log "  git remote -v"
+        Write-Log "  git remote set-url origin https://github.com/<user>/<repo>.git"
+        Write-Log "HTTPS push uchun: Git Credential Manager yoki PAT (repo scope)."
         exit 14
     }
 }

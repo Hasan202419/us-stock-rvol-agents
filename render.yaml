@@ -8,6 +8,7 @@
 # Free Web ~15 daqiqadan keyin uxlayadi; Worker alohida rejada (Blueprint sync dan keyin Dashboard da tekshiring).
 
 # Qo‘lda: python scripts/trigger_render_deploy.py
+# PowerShell: `RENDER_API_KEY` tekshiruvi — `powershell -NoProfile -File scripts/verify_render_api.ps1` (CMD ning `^` qatori PowerShellda ishlamaydi; curl headerlarni bitta qatorda yuboring).
 # CI: `.github/workflows/render-deploy.yml` — GitHub Secrets: RENDER_DEPLOY_HOOK_URL yoki RENDER_API_KEY + RENDER_SERVICE_ID.
 
 services:
