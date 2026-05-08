@@ -25,6 +25,8 @@ from agents.strategy_volume_ignition import VolumeIgnitionStrategyAgent
 from agents.strategy_vwap_breakout import VwapBreakoutStrategyAgent
 from agents.telegram_alerts_agent import TelegramAlertsAgent
 from agents.universe_agent import UniverseAgent
+from src.modules.halal_gate import apply_halal_gate, halal_report_to_dict
+from src.providers.zoya_client import fetch_zoya_compliance
 
 
 def _intraday_strategy_mode(mode: str) -> bool:
@@ -97,6 +99,35 @@ def _env_truthy_scan_default(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+
+def _apply_halal_filter_to_signal(signal: Dict[str, Any]) -> Dict[str, Any]:
+    """Signalga Zoya/halal gate qo'llaydi; non-compliant bo'lsa strategy passni bloklaydi."""
+
+    symbol = str(signal.get("ticker") or "").strip().upper()
+    if not symbol:
+        return signal
+
+    try:
+        zoya_report = fetch_zoya_compliance(symbol)
+        halal_ok, halal_reasons = apply_halal_gate(zoya_report, ratios=None)
+        signal["halal_report"] = halal_report_to_dict(zoya_report)
+        signal["halal_ok"] = bool(halal_ok)
+        signal["halal_reasons"] = list(halal_reasons or [])
+        if not halal_ok:
+            signal["strategy_pass"] = False
+            failed_rules = list(signal.get("failed_rules") or [])
+            if "halal_non_compliant" not in failed_rules:
+                failed_rules.append("halal_non_compliant")
+            signal["failed_rules"] = failed_rules
+    except Exception as exc:  # noqa: BLE001
+        failed_rules = list(signal.get("failed_rules") or [])
+        if "halal_check_error" not in failed_rules:
+            failed_rules.append("halal_check_error")
+        signal["failed_rules"] = failed_rules
+        signal["halal_ok"] = False
+        signal["halal_reasons"] = [f"Halal check error: {type(exc).__name__}"]
+    return signal
 
 
 def _apply_analyst_fields(
@@ -224,6 +255,7 @@ def run_scan_market(
                 vwap_strategy=vwap_strategy,
                 ignition_strategy=ignition_strategy,
             )
+            signal = _apply_halal_filter_to_signal(signal)
             return symbol, signal
         except Exception:
             fallback = {
