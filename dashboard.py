@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 # Render platform: PORT va RENDER=true avtomatik (https://render.com/docs/environment-variables)
 # STREAMLIT importidan oldin — telemetry va headless uchun.
@@ -10,6 +11,7 @@ if os.environ.get("RENDER", "").strip().lower() == "true":
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -77,6 +79,18 @@ def inject_dashboard_styles(theme: str = "dark_lab") -> None:
         <style>
             .block-container { max-width: 1450px; padding-top: 1rem; }
             div[data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
+            div[data-testid="stMetric"] {
+                border: 1px solid rgba(148,163,184,0.22);
+                border-radius: 14px;
+                padding: 0.35rem 0.55rem;
+                box-shadow: 0 8px 22px rgba(2,6,23,0.08);
+            }
+            div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+            .stButton > button {
+                border-radius: 10px !important;
+                border: 1px solid rgba(148,163,184,0.28) !important;
+                box-shadow: 0 4px 14px rgba(2,6,23,0.08);
+            }
             .stApp { background: linear-gradient(170deg,#f8fafc 0%,#e2e8f0 55%,#f1f5f9 100%); }
             header[data-testid="stHeader"] { background-color: transparent; }
             [data-testid="stSidebar"] { background: rgba(255,255,255,0.92) !important; border-right: 1px solid #cbd5e1; }
@@ -88,6 +102,19 @@ def inject_dashboard_styles(theme: str = "dark_lab") -> None:
         <style>
             .block-container { max-width: 1450px; padding-top: 1rem; }
             div[data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
+            div[data-testid="stMetric"] {
+                border: 1px solid rgba(148,163,184,0.22);
+                border-radius: 14px;
+                padding: 0.35rem 0.55rem;
+                background: linear-gradient(160deg, rgba(15,23,42,0.72) 0%, rgba(2,6,23,0.86) 100%);
+                box-shadow: 0 10px 26px rgba(2,6,23,0.26);
+            }
+            div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+            .stButton > button {
+                border-radius: 10px !important;
+                border: 1px solid rgba(148,163,184,0.28) !important;
+                background: linear-gradient(180deg, rgba(30,41,59,0.88), rgba(15,23,42,0.95)) !important;
+            }
             .stApp {
                 background: radial-gradient(circle at 12% -10%, rgba(56,189,248,0.12), transparent 40%),
                     linear-gradient(180deg,#0b1220 0%,#030712 45%,#020617 100%);
@@ -207,6 +234,37 @@ def render_pipeline_hero(strategy_mode: str, preset: str | None) -> None:
         st.markdown(layers_md)
 
 
+def render_ai_provider_status() -> None:
+    """DeepSeek/OpenAI ulanish holatini bir qarashda ko'rsatish."""
+
+    ai_provider = (os.getenv("AI_PROVIDER", "auto").strip().lower() or "auto")
+    ds_key = bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
+    oa_key = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    ds_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+
+    if ai_provider == "deepseek":
+        route = "DeepSeek (primary)"
+    elif ai_provider == "openai":
+        route = "OpenAI (primary)"
+    else:
+        route = "Auto: DeepSeek -> OpenAI fallback"
+
+    cols = st.columns(4)
+    cols[0].metric("AI route", route)
+    cols[1].metric("DeepSeek", "Connected" if ds_key else "Missing key")
+    cols[2].metric("OpenAI", "Connected" if oa_key else "Missing key")
+    cols[3].metric("DeepSeek model", ds_model)
+
+    if not ds_key and not oa_key:
+        st.warning("AI kalitlari topilmadi: DEEPSEEK_API_KEY yoki OPENAI_API_KEY ni yoqing.")
+    elif ai_provider == "deepseek" and not ds_key:
+        st.warning("AI_PROVIDER=deepseek, lekin DEEPSEEK_API_KEY yo'q. Fallback uchun OpenAI ishlashi mumkin.")
+    elif ai_provider == "openai" and not oa_key:
+        st.warning("AI_PROVIDER=openai, lekin OPENAI_API_KEY yo'q. Fallback uchun DeepSeek ishlashi mumkin.")
+    else:
+        st.caption("AI provayder holati normal. Skan natijasida `AI` ustunida qarorlar ko'rinadi.")
+
+
 def _signal_table_row(signal: Dict[str, Any], strategy_mode: str) -> Dict[str, Any]:
     paper_ready = bool(signal.get("paper_trade_ready"))
     block_reason = str(signal.get("paper_trade_block_reason") or "").strip()
@@ -231,6 +289,7 @@ def _signal_table_row(signal: Dict[str, Any], strategy_mode: str) -> Dict[str, A
         "Risk": signal.get("risk_level"),
         "Data delay": signal.get("data_delay"),
         "Updated": signal.get("updated_time"),
+        "TV Chart": tradingview_url(signal.get("ticker")),
     }
     if _volume_ignition_mode(strategy_mode):
         row.update(
@@ -242,6 +301,15 @@ def _signal_table_row(signal: Dict[str, Any], strategy_mode: str) -> Dict[str, A
             }
         )
     return row
+
+
+def tradingview_url(ticker: Any) -> str:
+    t = str(ticker or "").strip().upper()
+    if not t:
+        return ""
+    # Odatda US aksiyalar uchun NASDAQ prefiksi eng ko'p ishlaydi; foydalanuvchi istasa /tv orqali exchange bilan ham yuboradi.
+    symbol = t if ":" in t else f"NASDAQ:{t}"
+    return f"https://www.tradingview.com/chart/?symbol={quote(symbol, safe=':')}"
 
 
 def _chart_ms_to_et(ms: int) -> datetime:
@@ -409,7 +477,10 @@ def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
                     "colorscale": "Temps",
                     "opacity": 0.88,
                     "showscale": True,
-                    "colorbar": {"title": "Skor", "tickfont": {"size": 10}, "titlefont": {"size": 11}},
+                    "colorbar": {
+                        "title": {"text": "Skor", "font": {"size": 11}},
+                        "tickfont": {"size": 10},
+                    },
                 },
                 hovertemplate=(
                     "<b>%{text}</b><br>"
@@ -518,7 +589,8 @@ def render_sidebar() -> SidebarControls:
         f"Yahoo fallback: `YAHOO_FINANCE_ENABLED={os.getenv('YAHOO_FINANCE_ENABLED', 'true')}`."
     )
 
-    max_symbols = st.sidebar.slider("Skan qilinadigan tickers", min_value=10, max_value=400, value=120, step=10)
+    max_symbols = st.sidebar.slider("Skan qilinadigan tickers", min_value=10, max_value=3000, value=300, step=10)
+    st.sidebar.caption("Katta qiymatlar (1000+) barcha US aksiyalariga yaqinroq qamrov beradi, lekin vaqt ko‘proq oladi.")
 
     _fa = os.getenv("FINVIZ_ELITE_AUTH", "").strip()
     _fq = os.getenv("FINVIZ_ELITE_EXPORT_QUERY", "").strip()
@@ -584,8 +656,13 @@ def render_sidebar() -> SidebarControls:
         )
 
     st.sidebar.header("Broker / risk (.env)")
-    st.sidebar.write(f"TRADING_MODE: `{os.getenv('TRADING_MODE', 'paper')}`")
-    st.sidebar.write(f"MAX_POSITION_SIZE_USD: `{os.getenv('MAX_POSITION_SIZE_USD', '100')}`")
+    mode_now = os.getenv("TRADING_MODE", "paper")
+    base_now = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    st.sidebar.write(f"TRADING_MODE: `{mode_now}`")
+    st.sidebar.write(f"ALPACA_BASE_URL: `{base_now}`")
+    st.sidebar.write(f"MAX_POSITION_SIZE_USD: `{os.getenv('MAX_POSITION_SIZE_USD', '10000')}`")
+    if mode_now.strip().lower() != "paper" or "paper-api.alpaca.markets" not in base_now:
+        st.sidebar.warning("Paper orderlar blok bo‘lishi mumkin: `TRADING_MODE=paper` va `ALPACA_BASE_URL=...paper-api...` bo‘lsin.")
 
     st.sidebar.divider()
     with st.sidebar.expander("Qisqa yordam", expanded=False):
@@ -651,6 +728,7 @@ def render_paper_trading_panel(signals: List[Dict[str, Any]]) -> None:
     )
     selected_signal = next(signal for signal in available_signals if _paper_label(signal) == selected_label)
     selected_ticker = str(selected_signal["ticker"])
+    tv_link = tradingview_url(selected_ticker)
 
     if blocked_signals and ready_signals:
         st.caption(
@@ -674,6 +752,15 @@ def render_paper_trading_panel(signals: List[Dict[str, Any]]) -> None:
     if selected_signal.get("chart_session_bars"):
         st.markdown("##### Intraday — sham, VWAP, markerlar")
         render_vwap_mtrade_chart(selected_signal)
+
+    q1, q2, q3 = st.columns(3)
+    q1.link_button("TradingView chart", tv_link, use_container_width=True)
+    q2.link_button(
+        "Finviz snapshot",
+        f"https://finviz.com/quote.ashx?t={selected_ticker}",
+        use_container_width=True,
+    )
+    q3.caption("Chartni alohida tabda ochib, entry/SL ni tez tekshiring.")
 
     st.markdown("##### Buyurtma parametrlari")
 
@@ -736,6 +823,63 @@ def render_paper_trading_panel(signals: List[Dict[str, Any]]) -> None:
     st.caption(selected_signal.get("chatgpt_reason") or "AI izohi yo‘q.")
 
     st.write(f"RiskManager status: {'Approved' if approved else 'Blocked'} - {reason}")
+    with st.expander("Nega order ketmayapti? (tez diagnostika)", expanded=not approved):
+        st.markdown(
+            f"""
+- `TRADING_MODE`: `{os.getenv('TRADING_MODE', 'paper')}`
+- `ALPACA_BASE_URL`: `{os.getenv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets')}`
+- `MAX_POSITION_SIZE_USD`: `{os.getenv('MAX_POSITION_SIZE_USD', '10000')}`
+- `MAX_RISK_PCT_OF_EQUITY`: `{os.getenv('MAX_RISK_PCT_OF_EQUITY', os.getenv('MAX_RISK_PCT', '1.0'))}`
+- `MIN_RISK_REWARD_RATIO`: `{os.getenv('MIN_RISK_REWARD_RATIO', '2.0')}`
+- RiskManager reason: **{reason}**
+"""
+        )
+        st.caption(
+            "Agar `Blocked` chiqsa, odatda sabab: AI allow=false, R:R past, stop noto‘g‘ri, quantity risk budgetdan katta, "
+            "yoki notional `MAX_POSITION_SIZE_USD` dan yuqori."
+        )
+        if not approved:
+            suggestions: List[str] = []
+            text_reason = str(reason or "")
+
+            m_qty = re.search(r"risk budget qty (\d+)", text_reason)
+            if m_qty:
+                suggestions.append(f"Quantity ni <b>{m_qty.group(1)}</b> yoki undan pastga tushiring.")
+
+            m_notional = re.search(r"Position size \$([0-9.]+) exceeds \$([0-9.]+)", text_reason)
+            if m_notional and price > 0:
+                try:
+                    max_notional = float(m_notional.group(2))
+                    max_qty = int(max_notional // price)
+                    if max_qty > 0:
+                        suggestions.append(
+                            f"Notional limit uchun quantity taxminan <b>{max_qty}</b> yoki past bo‘lsin "
+                            f"(narx ${price:.2f} atrofida)."
+                        )
+                except ValueError:
+                    pass
+
+            if "Risk:reward too low" in text_reason and price > 0 and stop_loss > 0 and stop_loss < price:
+                min_rr = float(os.getenv("MIN_RISK_REWARD_RATIO", "2.0"))
+                risk_per_share = price - stop_loss
+                suggested_tp = round(price + (min_rr * risk_per_share), 4)
+                suggestions.append(
+                    f"R:R oshirish uchun Take Profitni kamida <b>{suggested_tp}</b> ga qo‘ying "
+                    f"(joriy min R:R = {min_rr})."
+                )
+
+            if "Stop loss must be below the current price" in text_reason:
+                suggestions.append(f"Stop lossni narxdan past qo‘ying (masalan <b>{round(price * 0.98, 4)}</b>).")
+
+            if "AI analyst did not allow" in text_reason or "AI analyst decision is not watch-worthy" in text_reason:
+                suggestions.append(
+                    "Bu setup AI tomonidan bloklangan: avval boshqa ticker tanlang yoki keyingi /scan natijasini kuting."
+                )
+
+            if suggestions:
+                st.markdown("##### Tez auto-fix tavsiyalar")
+                for s in suggestions:
+                    st.markdown(f"- {s}", unsafe_allow_html=True)
 
     if st.button("Submit Alpaca Paper Order", disabled=not approved):
         result = agents["trader"].submit_order(
@@ -779,6 +923,8 @@ def main() -> None:
     st.caption(
         "Deterministik skaner + AI maslahati. Savdo faqat **RiskManager** tekshiruvidan keyin, **paper Alpaca** orqali."
     )
+    render_ai_provider_status()
+    st.divider()
 
     st.session_state.setdefault("signals", [])
     st.session_state.setdefault("full_scan", [])
@@ -875,7 +1021,18 @@ def main() -> None:
                 )
         else:
             st.caption("Avval `Paper=READY` va yuqori `Score` setup-larga qarang; qolgan tafsilotlar pastdagi bo‘limlarda.")
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            st.dataframe(
+                table,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "TV Chart": st.column_config.LinkColumn(
+                        "TV Chart",
+                        help="TradingView chartni yangi tabda oching",
+                        display_text="Chart",
+                    )
+                },
+            )
 
             if st.session_state.get("platform_show_3d", False):
                 with st.expander("3D va 2D signal fokus manzarasi", expanded=False):
@@ -894,10 +1051,17 @@ def main() -> None:
                         render_vwap_mtrade_chart(picked)
 
             with st.expander("ChatGPT izohlari"):
+                missing_reason_count = 0
                 for signal in signals:
-                    st.markdown(
-                        f"**{signal['ticker']}**: {signal.get('chatgpt_reason', 'No reason supplied.')}"
-                    )
+                    ticker = signal["ticker"]
+                    decision = signal.get("chatgpt_decision") or "—"
+                    reason = str(signal.get("chatgpt_reason") or "").strip()
+                    if not reason or reason.lower() == "no reason supplied.":
+                        missing_reason_count += 1
+                        reason = "Batafsil izoh qaytmadi (qisqa AI javob)."
+                    st.markdown(f"- **{ticker}** · `{decision}` · {reason}")
+                if missing_reason_count:
+                    st.caption(f"Izohsiz yoki qisqa javob: {missing_reason_count} ta ticker.")
 
             if _volume_ignition_mode(str(current_mode)) and signals:
                 with st.expander("Volume ignition — strukturali tahlil (REASON→EXECUTION)", expanded=False):
