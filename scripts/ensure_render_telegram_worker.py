@@ -244,6 +244,10 @@ def _build_add_env() -> list[dict[str, str]]:
         "TELEGRAM_FORCE_EXPLORER": "true",
         "TELEGRAM_MAX_SYMBOLS": "200",
         "TELEGRAM_MAX_SYMBOLS_ALL": "1200",
+        "MARKET_DATA_PROVIDER_PRIORITY": "polygon,alpaca,yahoo,finnhub,alpha_vantage",
+        "FETCH_UNIVERSE_FINVIZ_FIRST": "true",
+        "TELEGRAM_USE_FINVIZ_CSV": "true",
+        "SCAN_RELAX_ON_EMPTY": "true",
     }
     rows_by_key: dict[str, dict[str, str]] = {r["key"]: r for r in rows}
     for k, v in forced_defaults.items():
