@@ -61,6 +61,7 @@ class VwapBreakoutStrategyAgent:
             "on",
         }
         self.mintick = float(os.getenv("SYMBOL_MINTICK", os.getenv("MTRADE_SYM_MINTICK", "0.01")))
+        self.signal_lookback_bars = max(1, int(os.getenv("MTRADE_SIGNAL_LOOKBACK_BARS", "3")))
         override = os.getenv("VWAP_STRATEGY_NAME", "").strip()
         if override:
             self.strategy_label = override
@@ -149,13 +150,19 @@ class VwapBreakoutStrategyAgent:
         breakout_index: int | None = None
         crossover_detected = False
 
-        last_buy_idx, replay_events = self._pine_build_events(
+        active_buy_idx, replay_events = self._pine_build_events(
             regular_session_bars, vwaps, closes, highs, lows
         )
 
         if self.pine_state_machine:
-            crossover_detected = last_buy_idx is not None and last_buy_idx == last_index
-            breakout_index = last_buy_idx
+            # "entry now" juda qattiq bo'lib qolmasin: oxirgi N barda ochilgan (hali yopilmagan) trade signal hisoblanadi.
+            if active_buy_idx is not None:
+                age = last_index - active_buy_idx
+                crossover_detected = age <= (self.signal_lookback_bars - 1)
+                breakout_index = active_buy_idx
+            else:
+                crossover_detected = False
+                breakout_index = None
         else:
             trade_indices: List[int] = []
             for index, bar in enumerate(regular_session_bars):
@@ -237,13 +244,13 @@ class VwapBreakoutStrategyAgent:
         highs: List[float],
         lows: List[float],
     ) -> tuple[int | None, List[Dict[str, Any]]]:
-        """Pine tartibi replay: oxirgi BUY bar indeksi va BUY/SELL/STOP/TIME hodisalari."""
+        """Pine tartibi replay: aktiv BUY indeksi (agar trade ochiq bo'lsa) va hodisalar."""
 
         events: List[Dict[str, Any]] = []
         in_trade = False
         tp_val = sl_val = entry = 0.0
 
-        last_buy_idx: int | None = None
+        active_buy_idx: int | None = None
 
         mintick_floor = max(self.mintick * 2.0, 1e-8)
 
@@ -277,7 +284,7 @@ class VwapBreakoutStrategyAgent:
                 sl_val = cl - risk
                 tp_val = cl + risk * self.r_multiplier
                 in_trade = True
-                last_buy_idx = i
+                active_buy_idx = i
                 events.append({"event": "BUY", "t": ms, "price": float(entry), "idx": i})
 
             time_up = in_trade and (ny_start >= exclusive_end)
@@ -291,16 +298,19 @@ class VwapBreakoutStrategyAgent:
                         {"event": "SELL", "t": ms, "price": float(cl), "idx": i, "ref": float(tp_val)}
                     )
                     in_trade = False
+                    active_buy_idx = None
                 elif hit_sl:
                     events.append(
                         {"event": "STOP", "t": ms, "price": float(cl), "idx": i, "ref": float(sl_val)}
                     )
                     in_trade = False
+                    active_buy_idx = None
                 elif time_up:
                     events.append({"event": "TIME", "t": ms, "price": float(cl), "idx": i})
                     in_trade = False
+                    active_buy_idx = None
 
-        return last_buy_idx, events
+        return active_buy_idx, events
 
     def _risk_targets_pine(
         self,
