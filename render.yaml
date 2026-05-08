@@ -1,11 +1,19 @@
 # Render Blueprint (Infrastructure as Code).
 # New → Blueprint → Git ulang; `sync: false` kalitlar Render Dashboard → Environment da to‘ldiriladi.
+#
+# 24/7 va terminal farqi (muhim):
+# - Lokal: `streamlit run` yoki `python scripts/telegram_command_bot.py` faqat sizning PC da ishlaydi;
+#   terminal yopilsa jarayon to‘xtaydi — bu bulutdagi 24/7 emas.
+# - Bulut: quyidagi `web` (dashboard URL) va `worker` (Telegram long-poll) Render serverlarida alohida ishlaydi;
+#   PC o‘chiq bo‘lsa ham bot/sayt ishlashi mumkin (servis Live + env to‘g‘ri bo‘lsa).
+# - Brauzerda ochish: Render berilgan `https://....onrender.com` manzili; localhost:8501 faqat lokal.
+#
 # Web: Streamlit dashboard. Worker: Telegram command bot (long-poll).
 # Worker uchun ham dashboard bilan bir xil API kalitlari kerak (/scan skan pipeline).
 # TELEGRAM_ALLOWED_CHAT_IDS — ixtiyoriy, vergul bilan chat id lar (bo‘sh bo‘lsa hammaga javob).
-# AI_PROVIDER va OPENAI_* — WEB va WORKER da bir xil bo‘lsa, skanda ChatGPT bosqichi ikkalasida ishlaydi.
+# Sukut AI_PROVIDER=blueprint da auto (`auto`da ikkala kalit bo‘lsa runtime DeepSeek ustun); Dashboarddan o‘zgartirish mumkin.
 # WORKER uchun TELEGRAM_SCAN_PRESET / alert lar quyidagi default qiymatlar bilan yonadi (Dashboard da o‘zgartirish mumkin).
-# Free Web ~15 daqiqadan keyin uxlayadi; Worker alohida rejada (Blueprint sync dan keyin Dashboard da tekshiring).
+# Tekshirish: Dashboard → har servis → Logs; lokalda: python scripts/render_worker_smoke.py
 
 # Qo‘lda: python scripts/trigger_render_deploy.py
 # PowerShell: `RENDER_API_KEY` tekshiruvi — `powershell -NoProfile -File scripts/verify_render_api.ps1` (CMD ning `^` qatori PowerShellda ishlamaydi; curl headerlarni bitta qatorda yuboring).
@@ -63,6 +71,8 @@ services:
         sync: false
       - key: STRATEGY_MODE
         sync: false
+      - key: SCAN_AI_INCLUDE_FAILS
+        value: "true"
       - key: DATABASE_URL
         sync: false
       - key: TELEGRAM_BOT_TOKEN
@@ -76,6 +86,7 @@ services:
       - key: TELEGRAM_ALERTS_ENABLED
         sync: false
       - key: AI_PROVIDER
+        value: "auto"
         sync: false
       - key: FMP_API_KEY
         sync: false
@@ -119,9 +130,13 @@ services:
       - key: TELEGRAM_BOT_REPLY_TOP_N
         sync: false
       - key: TELEGRAM_SCAN_PRESET
-        value: Balanced
+        value: Explorer
+      - key: TELEGRAM_FORCE_EXPLORER
+        value: "true"
       - key: TELEGRAM_MAX_SYMBOLS
-        value: "80"
+        value: "200"
+      - key: TELEGRAM_MAX_SYMBOLS_ALL
+        value: "1200"
       - key: TELEGRAM_DESK_LABEL
         value: TG scan
       - key: TELEGRAM_ALERT_ON_SCAN
@@ -172,6 +187,8 @@ services:
         sync: false
       - key: STRATEGY_MODE
         sync: false
+      - key: SCAN_AI_INCLUDE_FAILS
+        value: "true"
       - key: DATABASE_URL
         sync: false
       - key: TELEGRAM_CHAT_ID
@@ -179,6 +196,7 @@ services:
       - key: TELEGRAM_ALERTS_ENABLED
         sync: false
       - key: AI_PROVIDER
+        value: "auto"
         sync: false
       - key: FMP_API_KEY
         sync: false
