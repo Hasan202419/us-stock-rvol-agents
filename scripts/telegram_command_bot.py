@@ -54,6 +54,35 @@ def _parse_allowed_chat_ids() -> Optional[set[str]]:
     return out or None
 
 
+def _effective_allowed_chat_ids(token: str) -> Optional[set[str]]:
+    """TELEGRAM_ALLOWED_CHAT_IDS + TELEGRAM_CHAT_ID; umumiy xato: ikkalasi ham TOKEN dagi bot-id."""
+
+    base = _parse_allowed_chat_ids()
+    if base is None:
+        return None
+
+    merged: set[str] = set(base)
+    raw_primary = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if raw_primary:
+        try:
+            merged.add(str(int(raw_primary.replace(" ", ""), 10)))
+        except ValueError:
+            pass
+
+    pref = token.split(":", 1)[0].strip()
+    if pref.isdigit() and merged and merged.issubset({pref}):
+        print(
+            "telegram_command_bot: XATO taxminiy `.env`: TELEGRAM_ALLOWED_CHAT_IDS va/yoki TELEGRAM_CHAT_ID "
+            "`TELEGRAM_BOT_TOKEN` dagi bot IDs i bilan bir xil (masalan TOKEN=123:AA… → 123). "
+            "DM da `chat.id` odatda boshqa raqam — @userinfobot dan o‘zingiznikini oling. "
+            "Hozir chat filtri o‘chirildi (hammaga javob).",
+            flush=True,
+        )
+        return None
+
+    return merged
+
+
 def _delete_webhook_for_long_poll(token: str) -> None:
     """Webhook + long-poll bir vaqtda emas — 409 Conflict oldini kamaytirish."""
 
@@ -87,6 +116,10 @@ def _command_from_text(text: str) -> tuple[str, str]:
     return cmd_part[1:], remainder
 
 
+def _backtest_symbol_from_remainder(remainder: str) -> str:
+    return remainder.strip().upper() or os.getenv("TELEGRAM_BACKTEST_TICKER", "SPY").strip().upper()
+
+
 def _send_html(token: str, chat_id: str, text: str) -> None:
     chunks: List[str] = []
     t = text
@@ -97,7 +130,7 @@ def _send_html(token: str, chat_id: str, text: str) -> None:
         chunks.append(t)
     for c in chunks:
         try:
-            requests.post(
+            response = requests.post(
                 f"{TG_API}/bot{token}/sendMessage",
                 json={
                     "chat_id": chat_id,
@@ -107,8 +140,10 @@ def _send_html(token: str, chat_id: str, text: str) -> None:
                 },
                 timeout=30,
             )
-        except requests.RequestException:
-            pass
+            if not response.ok:
+                print(f"telegram_command_bot sendMessage error: {response.status_code} {response.text[:300]}", flush=True)
+        except requests.RequestException as exc:
+            print(f"telegram_command_bot sendMessage request failed: {exc}", flush=True)
 
 
 def _escape_html(s: Any) -> str:
@@ -146,7 +181,7 @@ def _persist_last_scan(
 _help_text = """<b>Mavjud buyruqlar</b>
 /start yoki /help — yordam
 /scan — to‘liq skan (dashboard bilan bir xil konveyer)
-/signals — oxirgi /scan ning qisqa natijasi (agar saqlangan bo‘lsa)
+/signals — oxirgi /scan ning qisqa natijasi (agar saqlangan bo‘lsa; worker restart/deploydan keyin yo‘qolishi mumkin)
 /paper — hozircha stub (Alpaca paper keyin ulanadi)
 /backtest [TICKER] — oddiy SMA crossover MVP (yahoo kunlik; misol: <code>/backtest AAPL</code>)
 
@@ -164,7 +199,7 @@ def main() -> None:
         print("TELEGRAM_BOT_TOKEN is required.", file=sys.stderr)
         sys.exit(1)
 
-    allowed = _parse_allowed_chat_ids()
+    allowed = _effective_allowed_chat_ids(token)
 
     skip_wh = os.getenv("TELEGRAM_SKIP_DELETE_WEBHOOK", "").strip().lower() in {"1", "true", "yes", "on"}
     if not skip_wh:
@@ -227,125 +262,148 @@ def main() -> None:
                 continue
             chat_s = str(chat_id)
             if allowed is not None and chat_s not in allowed:
+                print(
+                    f"telegram_command_bot: chat_id={chat_s} ruxsatli emas (TELEGRAM_ALLOWED_CHAT_IDS).",
+                    flush=True,
+                )
                 continue
 
             text = (msg.get("text") or "").strip()
             cmd, _remainder = _command_from_text(text)
             cmd = cmd.lower()
-
-            if cmd in {"", "start", "help"}:
-                _send_html(token, chat_s, _help_text)
-                continue
-
-            if cmd == "signals":
-                path = PROJECT_DIR / "state" / "last_telegram_scan.json"
-                if not path.is_file():
-                    _send_html(token, chat_s, "Hali skan yozuvi yo‘q. Avval /scan ishga tushiring.")
+            try:
+                if cmd in {"", "start", "help"}:
+                    _send_html(token, chat_s, _help_text)
                     continue
-                try:
-                    blob = json.loads(path.read_text(encoding="utf-8"))
-                except json.JSONDecodeError:
-                    _send_html(token, chat_s, "last_telegram_scan.json bo‘sh yoki nosoz.")
-                    continue
-                summary = blob.get("summary") or {}
-                rows = blob.get("top_signals") or []
-                lines = [
-                    f"<b>Oxirgi skan</b> ({blob.get('saved_at_utc', '')})\n",
-                    f"Universe: {blob.get('universe_size', '—')} · ",
-                    f"Pass+AI: {summary.get('eligible_signals', '—')} / {summary.get('tickers_scanned', '—')}\n",
-                ]
-                for r in rows[:10]:
-                    lines.append(_format_signal_line(r) + "\n")
-                _send_html(token, chat_s, "".join(lines))
-                continue
 
-            if cmd == "scan":
-                if not scan_lock.acquire(blocking=False):
-                    _send_html(token, chat_s, "Skan allaqachon ketmoqda, biroz kuting.")
-                    continue
-                try:
-                    _send_html(token, chat_s, "Skan boshlandi…")
-
-                    ctrls = telegram_default_controls()
-                    tickers = fetch_universe_for_scan(ctrls)
-
-                    ranked, _views, summary = run_scan_market(
-                        tickers,
-                        ctrls,
-                        repo_root=PROJECT_DIR,
-                        progress=None,
-                    )
-
-                    _persist_last_scan(
-                        ranked=ranked,
-                        summary=summary,
-                        universe_size=len(tickers),
-                    )
-
+                if cmd == "signals":
+                    path = PROJECT_DIR / "state" / "last_telegram_scan.json"
+                    if not path.is_file():
+                        _send_html(token, chat_s, "Hali skan yozuvi yo‘q. Avval /scan ishga tushiring.")
+                        continue
+                    try:
+                        blob = json.loads(path.read_text(encoding="utf-8"))
+                    except json.JSONDecodeError:
+                        _send_html(token, chat_s, "last_telegram_scan.json bo‘sh yoki nosoz.")
+                        continue
+                    summary = blob.get("summary") or {}
+                    rows = blob.get("top_signals") or []
                     lines = [
-                        "<b>Skan yakunlandi</b>\n",
-                        f"Desk: {_escape_html(summary.get('desk_label'))} · ",
-                        f"Preset: {_escape_html(summary.get('scan_preset'))}\n",
-                        f"Tickers: {summary.get('tickers_scanned')} · ",
-                        f"eligible (strategy+AI): {summary.get('eligible_signals')}\n",
-                        "<b>Top</b>\n",
+                        f"<b>Oxirgi skan</b> ({blob.get('saved_at_utc', '')})\n",
+                        f"Universe: {blob.get('universe_size', '—')} · ",
+                        f"Pass+AI: {summary.get('eligible_signals', '—')} / {summary.get('tickers_scanned', '—')} · ",
+                        f"paper-ready: {summary.get('paper_ready_signals', '—')}\n",
                     ]
-                    top_n = _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 8, 3, 15)
-                    for r in ranked[:top_n]:
+                    for r in rows[:10]:
                         lines.append(_format_signal_line(r) + "\n")
                     _send_html(token, chat_s, "".join(lines))
-                finally:
-                    scan_lock.release()
-                continue
+                    continue
 
-            if cmd == "paper":
+                if cmd == "scan":
+                    if not scan_lock.acquire(blocking=False):
+                        _send_html(token, chat_s, "Skan allaqachon ketmoqda, biroz kuting.")
+                        continue
+                    try:
+                        _send_html(token, chat_s, "Skan boshlandi…")
+
+                        ctrls = telegram_default_controls()
+                        tickers = fetch_universe_for_scan(ctrls)
+
+                        # Interaktiv /scan o‘zi javob beradi; fon broadcast alertlarni shu oqimda vaqtincha o‘chiramiz.
+                        prev_alert_on_scan = os.environ.get("TELEGRAM_ALERT_ON_SCAN")
+                        os.environ["TELEGRAM_ALERT_ON_SCAN"] = "false"
+                        try:
+                            ranked, _views, summary = run_scan_market(
+                                tickers,
+                                ctrls,
+                                repo_root=PROJECT_DIR,
+                                progress=None,
+                            )
+                        finally:
+                            if prev_alert_on_scan is None:
+                                os.environ.pop("TELEGRAM_ALERT_ON_SCAN", None)
+                            else:
+                                os.environ["TELEGRAM_ALERT_ON_SCAN"] = prev_alert_on_scan
+
+                        _persist_last_scan(
+                            ranked=ranked,
+                            summary=summary,
+                            universe_size=len(tickers),
+                        )
+
+                        lines = [
+                            "<b>Skan yakunlandi</b>\n",
+                            f"Desk: {_escape_html(summary.get('desk_label'))} · ",
+                            f"Preset: {_escape_html(summary.get('scan_preset'))}\n",
+                            f"Tickers: {summary.get('tickers_scanned')} · ",
+                            f"eligible (strategy+AI): {summary.get('eligible_signals')} · ",
+                            f"paper-ready: {summary.get('paper_ready_signals', '—')}\n",
+                            "<b>Top</b>\n",
+                        ]
+                        top_n = _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 8, 3, 15)
+                        for r in ranked[:top_n]:
+                            lines.append(_format_signal_line(r) + "\n")
+                        _send_html(token, chat_s, "".join(lines))
+                    finally:
+                        scan_lock.release()
+                    continue
+
+                if cmd == "paper":
+                    _send_html(
+                        token,
+                        chat_s,
+                        f"<code>/{cmd}</code> — hozircha keyingi fazada ulanadi.",
+                    )
+                    continue
+
+                if cmd == "backtest":
+                    sym = _backtest_symbol_from_remainder(_remainder)
+                    lookback = _env_int_bounded("TELEGRAM_BACKTEST_LOOKBACK_DAYS", 400, 120, 800)
+                    fast_bt = _env_int_bounded("TELEGRAM_BACKTEST_FAST_SMA", 10, 2, 200)
+                    slow_bt = _env_int_bounded("TELEGRAM_BACKTEST_SLOW_SMA", 30, 3, 400)
+                    if slow_bt <= fast_bt:
+                        slow_bt = fast_bt + 20
+                    closes_bt = daily_closes_yfinance(sym, lookback)
+                    if not closes_bt:
+                        _send_html(
+                            token,
+                            chat_s,
+                            "<b>Backtest</b>: tarix chiqmadi — tarmoq yoki <code>yfinance</code> ni tekshiring.",
+                        )
+                        continue
+                    res = sma_crossover_long_only_backtest(closes_bt, fast=fast_bt, slow=slow_bt)
+                    if not res.get("ok"):
+                        _send_html(
+                            token,
+                            chat_s,
+                            f"<b>Backtest</b> <code>{_escape_html(sym)}</code>: ma’lumot yetarli emas "
+                            f"(bars={res.get('bars')}, fast/slow={fast_bt}/{slow_bt}).",
+                        )
+                        continue
+                    msg = (
+                        f"<b>Backtest MVP</b> <code>{_escape_html(sym)}</code>\n"
+                        f"Kunlar: {len(closes_bt)} · SMA {fast_bt}/{slow_bt}\n"
+                        f"Strategiya jami: <b>{res.get('strategy_total_return_pct')}%</b> "
+                        f"(long barlar: {res.get('bars_in_long')})\n"
+                        f"Buy-hold (warmup dan): <b>{res.get('buy_hold_from_warmup_pct')}%</b>\n"
+                        f"<i>{_escape_html(res.get('rule'))}</i>"
+                    )
+                    _send_html(token, chat_s, msg)
+                    continue
+
                 _send_html(
                     token,
                     chat_s,
-                    f"<code>/{cmd}</code> — hozircha keyingi fazada ulanadi.",
+                    "Noma'lum buyruq. /help uchun ro‘yxat.",
                 )
-                continue
-
-            if cmd == "backtest":
-                sym = remainder.strip().upper() or os.getenv("TELEGRAM_BACKTEST_TICKER", "SPY").strip().upper()
-                lookback = _env_int_bounded("TELEGRAM_BACKTEST_LOOKBACK_DAYS", 400, 120, 800)
-                fast_bt = _env_int_bounded("TELEGRAM_BACKTEST_FAST_SMA", 10, 2, 200)
-                slow_bt = _env_int_bounded("TELEGRAM_BACKTEST_SLOW_SMA", 30, 3, 400)
-                if slow_bt <= fast_bt:
-                    slow_bt = fast_bt + 20
-                closes_bt = daily_closes_yfinance(sym, lookback)
-                if not closes_bt:
-                    _send_html(
-                        token,
-                        chat_s,
-                        "<b>Backtest</b>: tarix chiqmadi — tarmoq yoki <code>yfinance</code> ni tekshiring.",
-                    )
-                    continue
-                res = sma_crossover_long_only_backtest(closes_bt, fast=fast_bt, slow=slow_bt)
-                if not res.get("ok"):
-                    _send_html(
-                        token,
-                        chat_s,
-                        f"<b>Backtest</b> <code>{_escape_html(sym)}</code>: ma’lumot yetarli emas "
-                        f"(bars={res.get('bars')}, fast/slow={fast_bt}/{slow_bt}).",
-                    )
-                    continue
-                msg = (
-                    f"<b>Backtest MVP</b> <code>{_escape_html(sym)}</code>\n"
-                    f"Kunlar: {len(closes_bt)} · SMA {fast_bt}/{slow_bt}\n"
-                    f"Strategiya jami: <b>{res.get('strategy_total_return_pct')}%</b> "
-                    f"(long barlar: {res.get('bars_in_long')})\n"
-                    f"Buy-hold (warmup dan): <b>{res.get('buy_hold_from_warmup_pct')}%</b>\n"
-                    f"<i>{_escape_html(res.get('rule'))}</i>"
+            except Exception as exc:  # noqa: BLE001
+                print(f"telegram_command_bot command error ({cmd or 'unknown'}): {exc}", flush=True)
+                _send_html(
+                    token,
+                    chat_s,
+                    f"<b>Xato</b>: <code>/{_escape_html(cmd or 'unknown')}</code> vaqtida nosozlik bo‘ldi. "
+                    "Logni tekshirib, qayta urinib ko‘ring.",
                 )
-                _send_html(token, chat_s, msg)
-                continue
-
-            _send_html(
-                token,
-                chat_s,
-                "Noma'lum buyruq. /help uchun ro‘yxat.",
-            )
 
 
 if __name__ == "__main__":
