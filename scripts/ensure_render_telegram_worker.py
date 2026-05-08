@@ -242,11 +242,12 @@ def _build_add_env() -> list[dict[str, str]]:
     forced_defaults = {
         "TELEGRAM_SCAN_PRESET": "Explorer",
         "TELEGRAM_FORCE_EXPLORER": "true",
-        "TELEGRAM_MAX_SYMBOLS": "200",
-        "TELEGRAM_MAX_SYMBOLS_ALL": "1200",
+        "TELEGRAM_MAX_SYMBOLS": "500",
+        "TELEGRAM_MAX_SYMBOLS_ALL": "3000",
         "MARKET_DATA_PROVIDER_PRIORITY": "polygon,alpaca,yahoo,finnhub,alpha_vantage",
-        "FETCH_UNIVERSE_FINVIZ_FIRST": "true",
-        "TELEGRAM_USE_FINVIZ_CSV": "true",
+        # Finviz filter tor bo'lib qolsa universe 3-4 tickerga tushib ketmasligi uchun default o'chiriladi.
+        "FETCH_UNIVERSE_FINVIZ_FIRST": "false",
+        "TELEGRAM_USE_FINVIZ_CSV": "false",
         "SCAN_RELAX_ON_EMPTY": "true",
     }
     rows_by_key: dict[str, dict[str, str]] = {r["key"]: r for r in rows}
