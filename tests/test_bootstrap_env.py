@@ -115,3 +115,25 @@ def test_dotenv_overrides_empty_system_placeholder(tmp_path: Path, monkeypatch: 
     monkeypatch.setenv("_TEST_FROM_DOTENV_", "")
     load_project_env(tmp_path)
     assert os.environ.get("_TEST_FROM_DOTENV_") == "from-file-value"
+
+
+def test_massive_api_key_maps_to_polygon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text("MASSIVE_API_KEY=poly-from-massive\nPOLYGON_API_KEY=\n", encoding="utf-8")
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("POLYGON_API_KEY", raising=False)
+    load_project_env(tmp_path)
+    assert os.environ.get("POLYGON_API_KEY") == "poly-from-massive"
+
+
+def test_alpaca_legacy_aliases_map_to_current_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text(
+        "ALPACA_API_KEY_ID=key-legacy\nALPACA_API_SECRET_KEY=secret-legacy\nALPACA_API_KEY=\nALPACA_SECRET_KEY=\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ALPACA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("ALPACA_API_SECRET_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+    load_project_env(tmp_path)
+    assert os.environ.get("ALPACA_API_KEY") == "key-legacy"
+    assert os.environ.get("ALPACA_SECRET_KEY") == "secret-legacy"

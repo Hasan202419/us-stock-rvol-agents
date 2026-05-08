@@ -55,17 +55,50 @@ class MarketDataAgent:
 
         self._intraday_cache: Dict[tuple[str, int], tuple[float, List[Dict[str, Any]]]] = {}
 
+    def _provider_priority(self) -> List[str]:
+        raw = os.getenv("MARKET_DATA_PROVIDER_PRIORITY", "").strip()
+        if raw:
+            ordered = [part.strip().lower() for part in raw.split(",") if part.strip()]
+        else:
+            ordered = ["finnhub", "polygon", "alpaca", "yahoo", "alpha_vantage"]
+        normalized: List[str] = []
+        for name in ordered:
+            alias = "polygon" if name == "massive" else name
+            if alias not in normalized:
+                normalized.append(alias)
+        return normalized
+
     def fetch_market_data(self, ticker: str) -> Dict[str, Any]:
         """Build one market data record for a ticker.
 
         Free and paper accounts often receive delayed data. The dashboard keeps
         that visible by carrying `data_delay` into every generated signal.
         """
-        quote = self._fetch_finnhub_quote(ticker)
-        snapshot = self._fetch_polygon_snapshot(ticker)
-        candles = self._fetch_polygon_daily_candles(ticker)
-        alpaca_bar = self._fetch_alpaca_latest_bar(ticker)
-        yahoo_bundle = self._fetch_yahoo_daily_bundle(ticker)
+        priority = self._provider_priority()
+        quote_sources = {
+            "finnhub": lambda: self._fetch_finnhub_quote(ticker),
+            "polygon": lambda: self._fetch_polygon_snapshot(ticker),
+            "alpaca": lambda: self._fetch_alpaca_latest_bar(ticker),
+            "yahoo": lambda: self._fetch_yahoo_daily_bundle(ticker),
+        }
+        candle_sources = {
+            "polygon": lambda: self._fetch_polygon_daily_candles(ticker),
+            "yahoo": lambda: self._fetch_yahoo_daily_bundle(ticker),
+            "alpha_vantage": lambda: {"candles": self._fetch_alpha_vantage_daily(ticker)},
+        }
+        fetched_quotes: Dict[str, Dict[str, Any]] = {}
+        fetched_candles: Dict[str, Dict[str, Any]] = {}
+        for provider in priority:
+            if provider in quote_sources and provider not in fetched_quotes:
+                fetched_quotes[provider] = quote_sources[provider]() or {}
+            if provider in candle_sources and provider not in fetched_candles:
+                fetched_candles[provider] = candle_sources[provider]() or {}
+
+        quote = fetched_quotes.get("finnhub", {})
+        snapshot = fetched_quotes.get("polygon", {})
+        alpaca_bar = fetched_quotes.get("alpaca", {})
+        yahoo_bundle = fetched_quotes.get("yahoo", {})
+        candles = fetched_candles.get("polygon", {}).get("candles") or fetched_candles.get("yahoo", {}).get("candles") or []
 
         price = (
             quote.get("price")
@@ -82,9 +115,7 @@ class MarketDataAgent:
         )
         volume = snapshot.get("volume") or alpaca_bar.get("volume") or yahoo_bundle.get("volume") or 0
         if not candles:
-            candles = yahoo_bundle.get("candles") or []
-        if not candles and self.alpha_vantage_enabled:
-            candles = self._fetch_alpha_vantage_daily(ticker)
+            candles = fetched_candles.get("alpha_vantage", {}).get("candles") or []
         avg_volume = self._average_volume(candles) or snapshot.get("previous_volume") or volume
         change_percent = self._change_percent(price, previous_close)
 

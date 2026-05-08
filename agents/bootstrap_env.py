@@ -78,9 +78,62 @@ def normalize_alpaca_key_alias() -> None:
 
     if os.getenv("ALPACA_API_KEY", "").strip():
         return
-    kid = os.getenv("ALPACA_KEY_ID", "").strip()
+    kid = os.getenv("ALPACA_KEY_ID", "").strip() or os.getenv("ALPACA_API_KEY_ID", "").strip()
     if kid:
         os.environ["ALPACA_API_KEY"] = kid
+
+
+def normalize_alpaca_secret_alias() -> None:
+    """`ALPACA_SECRET_KEY` bo‘sh bo‘lsa, eski aliaslardan ko‘chiradi."""
+
+    if os.getenv("ALPACA_SECRET_KEY", "").strip():
+        return
+    secret = os.getenv("ALPACA_API_SECRET_KEY", "").strip()
+    if secret:
+        os.environ["ALPACA_SECRET_KEY"] = secret
+
+
+def normalize_polygon_alias() -> None:
+    """Eski loyihadagi `MASSIVE_API_KEY` ni `POLYGON_API_KEY` o‘rnida qabul qiladi."""
+
+    if os.getenv("POLYGON_API_KEY", "").strip():
+        return
+    massive = os.getenv("MASSIVE_API_KEY", "").strip()
+    if massive:
+        os.environ["POLYGON_API_KEY"] = massive
+
+
+# HTTP sarlavha / query orqali yuboriladi; nusxa-yozishda ASCII bo‘lmagan belgilar (BOM, “smart quote”)
+# Windows da UnicodeEncodeError yoki 401 berishi mumkin. Haqiqiy kalitlar ASCII.
+_HTTP_ASCII_SANITIZE_KEYS: frozenset[str] = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "POLYGON_API_KEY",
+        "FINNHUB_API_KEY",
+        "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY",
+        "RENDER_API_KEY",
+        "FMP_API_KEY",
+        "NEWSAPI_KEY",
+        "ZOYA_API_KEY",
+        "GITHUB_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+        "ALPHA_VANTAGE_API_KEY",
+    }
+)
+
+
+def strip_non_ascii_from_http_api_keys() -> None:
+    """`.env` dagi kalitlardan faqat ASCII qoldiradi (yashirin Unicode olib tashlanadi)."""
+
+    for key in _HTTP_ASCII_SANITIZE_KEYS:
+        raw = os.getenv(key, "")
+        if not raw:
+            continue
+        cleaned = "".join(ch for ch in raw if ch.isascii()).strip()
+        if cleaned != raw:
+            os.environ[key] = cleaned
 
 
 def _parse_services_list(payload: object) -> list[dict[str, object]]:
@@ -178,5 +231,8 @@ def load_project_env(project_root: Path) -> Path:
     promote_master_plan_comment_env(env_path)
     drop_invalid_render_service_id()
     resolve_render_service_id_from_api()
+    normalize_polygon_alias()
     normalize_alpaca_key_alias()
+    normalize_alpaca_secret_alias()
+    strip_non_ascii_from_http_api_keys()
     return env_path

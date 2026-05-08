@@ -29,6 +29,8 @@ services:
         sync: false
       - key: POLYGON_API_KEY
         sync: false
+      - key: MASSIVE_API_KEY
+        sync: false
       - key: YAHOO_FINANCE_ENABLED
         sync: false
       - key: INTRADAY_YAHOO_BEFORE_POLYGON
@@ -45,13 +47,19 @@ services:
         sync: false
       - key: ALPACA_API_KEY
         sync: false
+      - key: ALPACA_API_KEY_ID
+        sync: false
       - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: ALPACA_API_SECRET_KEY
         sync: false
       - key: ALPACA_BASE_URL
         sync: false
       - key: TRADING_MODE
         sync: false
       - key: DATA_DELAY_MINUTES
+        sync: false
+      - key: MARKET_DATA_PROVIDER_PRIORITY
         sync: false
       - key: STRATEGY_MODE
         sync: false
@@ -75,6 +83,8 @@ services:
         sync: false
       - key: ZOYA_API_KEY
         sync: false
+      - key: ZOYA_ENABLED
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
@@ -89,6 +99,7 @@ services:
         sync: false
 
   # Long-polling Telegram: /scan, /signals, /help (scripts/telegram_command_bot.py)
+  # Interactive /scan worker ichida o‘zi javob beradi; shuning uchun TELEGRAM_ALERT_ON_SCAN=false.
   - type: worker
     name: us-stock-rvol-telegram-bot
     runtime: python
@@ -114,7 +125,7 @@ services:
       - key: TELEGRAM_DESK_LABEL
         value: TG scan
       - key: TELEGRAM_ALERT_ON_SCAN
-        value: "true"
+        value: "false"
       - key: TELEGRAM_ALERT_TOP_N
         value: "5"
       - key: TELEGRAM_USE_FINVIZ_CSV
@@ -126,6 +137,8 @@ services:
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: POLYGON_API_KEY
+        sync: false
+      - key: MASSIVE_API_KEY
         sync: false
       - key: YAHOO_FINANCE_ENABLED
         sync: false
@@ -143,13 +156,19 @@ services:
         sync: false
       - key: ALPACA_API_KEY
         sync: false
+      - key: ALPACA_API_KEY_ID
+        sync: false
       - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: ALPACA_API_SECRET_KEY
         sync: false
       - key: ALPACA_BASE_URL
         sync: false
       - key: TRADING_MODE
         sync: false
       - key: DATA_DELAY_MINUTES
+        sync: false
+      - key: MARKET_DATA_PROVIDER_PRIORITY
         sync: false
       - key: STRATEGY_MODE
         sync: false
@@ -166,6 +185,8 @@ services:
       - key: NEWSAPI_KEY
         sync: false
       - key: ZOYA_API_KEY
+        sync: false
+      - key: ZOYA_ENABLED
         sync: false
       - key: SUPABASE_URL
         sync: false

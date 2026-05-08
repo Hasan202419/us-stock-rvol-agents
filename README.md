@@ -1,19 +1,19 @@
 # us-stock-rvol-agents
 
-Bu loyiha AQSh aksiyalarining AYNI (relative volume / rvol) va boshqa strategiyalar asosida skan va signal yuboradigan dashboard + Telegram bot to'plami.
+Bu loyiha AQSh aksiyalarining AYNI (`relative volume / rvol`) va boshqa strategiyalar asosida skan, signal, AI tahlil, paper-order oqimi va Telegram integratsiyasini bir joyga to'playdi.
 
-Ushbu README loyihani shaxsiy foydalanishga moslashtirish, kerakli API kalitlarini joylashtirish va xavfsiz saqlash bo'yicha oddiy ko'rsatmalarni o'zbek tilida beradi.
+Ushbu README loyihani shaxsiy foydalanishga moslashtirish, API kalitlarini xavfsiz saqlash, lokalda ishga tushirish va Render'ga chiqarish bo'yicha amaliy ko'rsatma beradi.
 
-Tez boshlash
+## Tez boshlash
 
-1) Kodni klonlash:
+1. Kodni klonlash:
 
 ```bash
 git clone https://github.com/Hasan202419/us-stock-rvol-agents.git
 cd us-stock-rvol-agents
 ```
 
-2) Virtual muhit va talablarni o'rnatish:
+2. Virtual muhit va talablarni o'rnatish:
 
 ```bash
 python -m venv .venv
@@ -22,9 +22,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-3) .env faylini sozlash:
-
-- Faylni nusxalash va maxfiy kalitlarni kiritish:
+3. `.env` faylini sozlash:
 
 ```bash
 cp .env.example .env
@@ -32,64 +30,91 @@ cp .env.example .env
 # copy .env.example .env
 ```
 
-- .env ichida quyidagi kalitlarni to'ldiring (hech qachon real kalitlarni repoga commit qilmang):
+`.env` ichida odatda quyidagilar kerak bo'ladi:
 
-  - OPENAI_API_KEY — LLM chaqiriqlari uchun (yoki DEEPSEEK).
-  - POLYGON_API_KEY yoki FINNHUB_API_KEY yoki YAHOO fallback.
-  - ALPACA_API_KEY va ALPACA_SECRET_KEY (agar alpaca bilan order jo'natishmoqchi bo'lsangiz).
-  - TELEGRAM_BOT_TOKEN va TELEGRAM_CHAT_ID — Telegram bot va chat uchun.
-  - RENDER_SERVICE_ID / RENDER_DEPLOY_HOOK_URL — agar Render-ga joylayotgan bo'lsangiz.
+- `OPENAI_API_KEY` yoki `DEEPSEEK_API_KEY`
+- `POLYGON_API_KEY` yoki `FINNHUB_API_KEY` yoki Yahoo fallback
+- `ALPACA_API_KEY` va `ALPACA_SECRET_KEY`
+- `TELEGRAM_BOT_TOKEN` va `TELEGRAM_CHAT_ID`
+- `RENDER_SERVICE_ID` yoki `RENDER_DEPLOY_HOOK_URL`
 
-- .env.example fayli loyihaning qaysi kalitlarni kutishini ko'rsatadi. .env faylini Git dan chiqarib yuborish uchun .gitignore-ga qo'shing (ko'pincha .env avtomatik chiqariladi).
+## Xavfsizlik
 
-Xavfsizlik bo'yicha tavsiyalar
+- Hech qachon haqiqiy API kalitlarini GitHub'ga commit qilmang.
+- `.env` fayli `.gitignore` ichida ekanini tekshiring.
+- Public repo bo'lsa, GitHub'da `private` qilishni ko'rib chiqing.
+- Deploy kalitlarini repo ichiga emas, Render env vars ichiga joylang.
 
-- Hech qachon haqiqiy API kalitlarini GitHub-ga push qilmang.
-- Localda .env faylni .gitignore ro'yxatida ekanligiga ishonch hosil qiling.
-- Loyiha GitHub sahifasida public bo'lsa, reponi private (xususiy) qiling: Repository → Settings → Danger Zone → Change repository visibility → Make private.
-- Continuous Deployment (Render yoki boshqa) ishlatganda, keys-ni Render / Vercel / netlify muhiti o'zgaruvchilari (Env Vars) sifatida qo'shing — bu orqali repo ichiga kalit qo'yilmaydi.
+## Local start
 
-Minimal ishga tushirish
+Dashboard only:
 
-- Dashboard (Streamlit):
+```powershell
+cd C:\Users\o8324\us-stock-rvol-agents
+.\scripts\start_platform.ps1
+```
+
+Dashboard + Telegram bot:
+
+```powershell
+cd C:\Users\o8324\us-stock-rvol-agents
+.\scripts\start_platform.ps1 -WithTelegram
+```
+
+Open `http://localhost:8501/`.
+
+Minimal qo'l bilan ishga tushirish:
 
 ```bash
 streamlit run dashboard.py
-# yoki render.yaml bo'yicha deploy qiling
-```
-
-- Telegram bot (lokal):
-
-```bash
 python scripts/telegram_command_bot.py
 ```
 
-API to'ldirishni tekshirish (tez):
+## Verification
 
-```bash
-# .env to'ldirilganligini tekshirish
-python -c "import os; print('OPENAI=', bool(os.getenv('OPENAI_API_KEY')))
-"
+Quick local verify:
+
+```powershell
+.\scripts\verify_local.ps1
 ```
 
-Yordamchi fayllar
+Full queue:
 
-- .env.example — barcha kutilayotgan o'zgaruvchilar ro'yxatini o'z ichiga oladi.
-- render.yaml — Render uchun blueprint; deploy muhit o'zgaruvchilarini avtomatlashtirish uchun ishlatiladi.
+```powershell
+.\scripts\run_queue.ps1
+```
 
-Qanday qilib reponi shaxsiy (private) qilasiz
+API-only check:
 
-1. GitHub sahifasida repoga o'ting.
-2. Settings → Danger Zone bo'limiga kiring.
-3. Change repository visibility → Make private.
-4. Agar repo public bo'lsa va siz uni private qilganingizda, forklar va boshqa public URL-lar saqlanib qolishi mumkin — diqqat bilan tekshiring.
+```powershell
+python scripts\check_apis.py
+```
 
-Keyingi qadamlar (men bajara oladigan ishlar)
+## Render
 
-- Agar xohlasangiz, men README.md-ni to'liq o'zbek tilida yanada kengaytiraman (misollar, tez-yo'l troubleshooting, ko'proq buyruqlar).
-- Men .github/workflows yoki render.yaml asosida deploy skriptlarini tekshirib, maxfiylar qanday ulanishini tushuntirib beraman.
-- Agar siz ruxsat bersangiz, repoga yangi fayllar (masalan, API checklist) qo'shishim yoki README ni yana yangilashim mumkin.
+- `render.yaml` Streamlit web service va Telegram worker'ni belgilaydi.
+- `sync: false` bo'lgan kalitlar Git'dan ko'chmaydi, ularni Render Dashboard'da to'ldiring.
+- Web deploy uchun Blueprint sync, deploy hook yoki Render API flow ishlatish mumkin.
 
----
+## Useful env compatibility
 
-Menga ayting: README-ni yana kengaytiraymi yoki biror faylni bevosita repoga qo'shaymi?
+Older project env names are accepted during bootstrap:
+
+- `MASSIVE_API_KEY` -> `POLYGON_API_KEY`
+- `ALPACA_API_KEY_ID` -> `ALPACA_API_KEY`
+- `ALPACA_API_SECRET_KEY` -> `ALPACA_SECRET_KEY`
+- `ALPACA_KEY_ID` -> `ALPACA_API_KEY`
+
+Optional provider order:
+
+```env
+MARKET_DATA_PROVIDER_PRIORITY=polygon,yahoo,alpaca,finnhub,alpha_vantage
+```
+
+## Yordamchi fayllar
+
+- `.env.example` — kutilayotgan env ro'yxati
+- `render.yaml` — Render blueprint
+- `scripts/start_platform.ps1` — lokal dashboard / bot start
+- `scripts/verify_local.ps1` — tez lokal verify
+- `scripts/run_queue.ps1` — to'liq tekshiruv navbati

@@ -208,22 +208,26 @@ def render_pipeline_hero(strategy_mode: str, preset: str | None) -> None:
 
 
 def _signal_table_row(signal: Dict[str, Any], strategy_mode: str) -> Dict[str, Any]:
+    paper_ready = bool(signal.get("paper_trade_ready"))
+    block_reason = str(signal.get("paper_trade_block_reason") or "").strip()
     row: Dict[str, Any] = {
         "Ticker": signal.get("ticker"),
-        "Strategy": signal.get("strategy_name"),
         "Price": signal.get("price"),
+        "RVOL": signal.get("rvol"),
+        "Score": signal.get("score"),
+        "AI": signal.get("chatgpt_decision"),
+        "Paper": "READY" if paper_ready else "BLOCKED",
+        "Why blocked": block_reason or "—",
+        "Strategy": signal.get("strategy_name"),
         "Change %": signal.get("change_percent"),
         "Volume": signal.get("volume"),
         "Avg Volume": signal.get("avg_volume"),
-        "RVOL": signal.get("rvol"),
-        "Score": signal.get("score"),
         "TP": signal.get("take_profit_suggestion"),
         "SL": signal.get("stop_suggestion"),
         "VWAP": signal.get("session_vwap"),
         "RSI (sessiya)": signal.get("rsi_14"),
         "ATR (sessiya)": signal.get("atr_14"),
         "VWAP cross": signal.get("vwap_cross"),
-        "ChatGPT": signal.get("chatgpt_decision"),
         "Risk": signal.get("risk_level"),
         "Data delay": signal.get("data_delay"),
         "Updated": signal.get("updated_time"),
@@ -355,7 +359,7 @@ def render_vwap_mtrade_chart(signal: Dict[str, Any]) -> None:
 
 
 def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
-    """Scatter3d: narx × RVOL × skor — mavjud Plotly/agent ma'lumoti."""
+    """Scatter3d + 2D: narx × RVOL × skor — kamroq shovqin, ko‘proq qaror qo‘llovi."""
 
     try:
         import plotly.graph_objects as go
@@ -364,7 +368,9 @@ def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
         return
 
     rows: List[Tuple[float, float, float, str]] = []
-    for s in signals[:150]:
+    ranked_signals = sorted(signals, key=lambda item: (bool(item.get("paper_trade_ready")), float(item.get("score") or 0)), reverse=True)
+    subset = ranked_signals[:30]
+    for s in subset:
         px = float(s.get("price") or 0)
         rv = float(s.get("rvol") or 0)
         sc = float(s.get("score") or 0)
@@ -386,6 +392,7 @@ def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
     tmpl = "plotly_dark" if is_dark else "plotly_white"
     scene_bg = "#0f172a" if is_dark else "#ffffff"
 
+    top_labels = set(texts[:8])
     fig = go.Figure(
         data=[
             go.Scatter3d(
@@ -393,11 +400,11 @@ def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
                 y=ys,
                 z=zs,
                 mode="markers+text",
-                text=texts,
+                text=[t if t in top_labels else "" for t in texts],
                 textposition="top center",
                 textfont={"size": 10},
                 marker={
-                    "size": 7,
+                    "size": [10 if subset[i].get("paper_trade_ready") else 6 for i in range(len(subset))],
                     "color": zs,
                     "colorscale": "Temps",
                     "opacity": 0.88,
@@ -416,7 +423,7 @@ def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
 
     fig.update_layout(
         template=tmpl,
-        title={"text": "3D nuqtalar — signal maydoni", "font": {"size": 15}},
+        title={"text": "3D signal maydoni (top 30, label faqat eng muhimlar)", "font": {"size": 15}},
         height=520,
         margin={"l": 0, "r": 0, "t": 40, "b": 0},
         scene={
@@ -424,16 +431,47 @@ def render_signals_spatial_landscape(signals: List[Dict[str, Any]]) -> None:
             "yaxis_title": "RVOL",
             "zaxis_title": "Skor",
             "bgcolor": scene_bg,
-            "aspectmode": "cube",
+            "aspectmode": "data",
         },
     )
 
     _safe = "".join(texts[:3]) + "_" + str(len(rows))
     plot_key = "spatial_landscape_" + _safe.replace(" ", "_")[:104]
-    try:
-        st.plotly_chart(fig, use_container_width=True, key=plot_key)
-    except TypeError:
-        st.plotly_chart(fig, use_container_width=True)
+    c3d, c2d = st.columns([3, 2])
+    with c3d:
+        try:
+            st.plotly_chart(fig, use_container_width=True, key=plot_key)
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True)
+    with c2d:
+        fig2 = go.Figure(
+            data=[
+                go.Scatter(
+                    x=ys,
+                    y=zs,
+                    mode="markers+text",
+                    text=[t if t in top_labels else "" for t in texts],
+                    textposition="top center",
+                    marker={
+                        "size": [10 if subset[i].get("paper_trade_ready") else 7 for i in range(len(subset))],
+                        "color": xs,
+                        "colorscale": "Blues",
+                        "showscale": True,
+                        "colorbar": {"title": "Narx"},
+                    },
+                    hovertemplate="<b>%{text}</b><br>RVOL: %{x}<br>Skor: %{y}<extra></extra>",
+                )
+            ]
+        )
+        fig2.update_layout(
+            template=tmpl,
+            title={"text": "2D fokus — RVOL × Skor", "font": {"size": 14}},
+            height=520,
+            margin={"l": 10, "r": 10, "t": 40, "b": 10},
+            xaxis_title="RVOL",
+            yaxis_title="Skor",
+        )
+        st.plotly_chart(fig2, use_container_width=True)
 
 
 
@@ -550,23 +588,15 @@ def render_sidebar() -> SidebarControls:
     st.sidebar.write(f"MAX_POSITION_SIZE_USD: `{os.getenv('MAX_POSITION_SIZE_USD', '100')}`")
 
     st.sidebar.divider()
-    with st.sidebar.expander("Bo‘limlarni qanday ochaman?", expanded=True):
+    with st.sidebar.expander("Qisqa yordam", expanded=False):
         st.markdown(
             """
-**Chap panel** — scanner sozlamalari, preset va `.env` haqidagi qatorlar.
+1. **Run market scan** ni bosing.
+2. **Mos kelganlar** — tez qaror jadvali.
+3. **Barcha skan** — nega o‘tmaganini ko‘rsatadi.
+4. **Paper savdo** — faqat tayyor signal bilan order preview.
 
-**Asosidagi 3 ta yorliq (tab)**  
-- **Mos kelganlar** — o‘tgan signallar jadvalidan keyin yashirin **bo‘limlar** bor: ularning **sarlavhasiga bir marta bosasiz**, ichki matn ochiladi.  
-- **Barcha skan** — har bir ticker va *Failed Rules*.  
-- **Paper savdo** — tanlangan signal bo‘yicha buyurtma.
-
-**Qanday farq qiladi?**  
-- **Tab**: tepada yozuv ustiga bosasiz (`Mos kelganlar` va hokazo).  
-- **Expander**: jadvaldan keyingi yozuv ustiga bosasiz (`ChatGPT izohlari`, `Intraday grafik` va hokazo).
-
-**Katak kartochka** tepada — rejim va preset; ostidagi **Bo‘lim · zanjir** ham expander (`expanded` sukutda ochiq).
-
-**Streamlit ishga tushirish** (`cd` loyiha ildiziga):  
+**Streamlit ishga tushirish**:
 `streamlit run dashboard.py`
 """
         )
@@ -595,9 +625,40 @@ def render_paper_trading_panel(signals: List[Dict[str, Any]]) -> None:
     agents = build_agents()
     mode = resolve_strategy_mode()
 
-    tickers = [signal["ticker"] for signal in signals]
-    selected_ticker = st.selectbox("Ticker", tickers, key="paper_pick_ticker")
-    selected_signal = next(signal for signal in signals if signal["ticker"] == selected_ticker)
+    ready_signals = [signal for signal in signals if signal.get("paper_trade_ready")]
+    blocked_signals = [signal for signal in signals if not signal.get("paper_trade_ready")]
+    show_blocked = st.checkbox(
+        "Bloklangan setup-larni ham ko‘rsat",
+        value=not bool(ready_signals),
+        help="O‘chiq bo‘lsa faqat paper-trade tayyor signallar ko‘rinadi.",
+    )
+
+    available_signals = signals if show_blocked or not ready_signals else ready_signals
+    if not available_signals:
+        st.warning("Paper savdo uchun hali tayyor signal yo‘q.")
+        return
+
+    def _paper_label(signal: Dict[str, Any]) -> str:
+        status = "READY" if signal.get("paper_trade_ready") else "BLOCKED"
+        reason = str(signal.get("paper_trade_block_reason") or "").strip()
+        suffix = f" — {reason}" if reason else ""
+        return f"{signal['ticker']} [{status}]{suffix}"
+
+    selected_label = st.selectbox(
+        "Ticker",
+        [_paper_label(signal) for signal in available_signals],
+        key="paper_pick_ticker",
+    )
+    selected_signal = next(signal for signal in available_signals if _paper_label(signal) == selected_label)
+    selected_ticker = str(selected_signal["ticker"])
+
+    if blocked_signals and ready_signals:
+        st.caption(
+            f"Paper-ready: **{len(ready_signals)}** · bloklangan setup: **{len(blocked_signals)}**. "
+            "Bloklanganlar scannerdan o‘tgan, lekin savdoga hali tayyor emas."
+        )
+    elif blocked_signals and not ready_signals:
+        st.warning("Hozircha barcha setup bloklangan — AI yoki RiskManager izohlarini pastda ko‘ring.")
 
     if _volume_ignition_mode(mode) and selected_signal.get("volume_pattern_summary"):
         c1, c2, c3 = st.columns(3)
@@ -654,9 +715,26 @@ def render_paper_trading_panel(signals: List[Dict[str, Any]]) -> None:
         "allow_order": selected_signal.get("chatgpt_allow_order", False),
         "risk_flags_hard": _parse_json_list(selected_signal.get("chatgpt_risk_flags_hard_json")),
         "paper_ready_blocked": selected_signal.get("paper_ready_blocked_field"),
+        "reason": selected_signal.get("chatgpt_reason"),
     }
     order = {"quantity": int(quantity), "stop_loss": float(stop_loss), "take_profit": float(take_profit)}
     approved, reason = agents["risk"].approve_order(selected_signal, analyst_view, order)
+
+    ai_cols = st.columns(4)
+    ai_cols[0].metric("AI decision", selected_signal.get("chatgpt_decision") or "—")
+    ai_cols[1].metric("Allow order", "Yes" if selected_signal.get("chatgpt_allow_order") else "No")
+    ai_cols[2].metric("Paper ready", "Yes" if selected_signal.get("paper_trade_ready") else "No")
+    ai_cols[3].metric("Risk level", selected_signal.get("risk_level") or "—")
+
+    if selected_signal.get("paper_trade_block_reason"):
+        st.warning(f"Paper block: {selected_signal.get('paper_trade_block_reason')}")
+    if selected_signal.get("paper_ready_blocked_field"):
+        st.caption(f"paper_ready_blocked: {selected_signal.get('paper_ready_blocked_field')}")
+    hard_flags = _parse_json_list(selected_signal.get("chatgpt_risk_flags_hard_json"))
+    if hard_flags:
+        st.caption(f"Hard AI flags: {', '.join(hard_flags)}")
+    st.caption(selected_signal.get("chatgpt_reason") or "AI izohi yo‘q.")
+
     st.write(f"RiskManager status: {'Approved' if approved else 'Blocked'} - {reason}")
 
     if st.button("Submit Alpaca Paper Order", disabled=not approved):
@@ -711,7 +789,7 @@ def main() -> None:
         run_clicked = st.button("Run market scan", type="primary", use_container_width=True)
     with c_hint:
         st.caption(
-            "Skandan keyin **Mos kelganlar** (o‘tganlar) va **Barcha skan** (sabablar jadvali) yangilanadi."
+            "Skandan keyin yuqorida umumiy metrikalar, pastda esa **tez qaror jadvali**, to‘liq skan va paper savdo yangilanadi."
         )
 
     if run_clicked:
@@ -744,11 +822,12 @@ def main() -> None:
     if summary and st.session_state.get("platform_show_metrics", True):
         scanned = int(summary["tickers_scanned"])
         eligible = int(summary["eligible_signals"])
+        paper_ready = int(summary.get("paper_ready_signals", 0))
         cols = st.columns(4)
         cols[0].metric("Skanlangan", scanned, help="Universe dan olingan symbolar soni")
-        cols[1].metric("Signal (pass)", eligible, help="Strategiya + ChatGPT oqimi")
-        cols[2].metric("Filtrdan tushgan", max(scanned - eligible, 0))
-        cols[3].metric("Parallel ishchilar", int(summary.get("parallel_workers", 1)))
+        cols[1].metric("Signal (pass)", eligible, help="Strategiya filtridan o‘tgan va AI ko‘rilgan setup.")
+        cols[2].metric("Paper ready", paper_ready, help="Paper savdo uchun hozir tayyor setup.")
+        cols[3].metric("Bloklangan", max(eligible - paper_ready, 0), help="Scan o‘tgan, lekin savdoga hali tayyor emas.")
         thresholds = summary.get("rvol_thresholds") or {}
         st.caption(
             f"So‘nggi skan: preset **{summary.get('scan_preset')}**, `STRATEGY_MODE={summary.get('strategy_mode')}`, "
@@ -775,7 +854,7 @@ def main() -> None:
     table = signals_dataframe(signals, current_mode)
 
     with tabs[0]:
-        st.subheader("Saralangan signal jadvali")
+        st.subheader("Tez qaror jadvali")
         if not summary:
             st.info("Avval **Run market scan**.", icon="📡")
         elif table.empty:
@@ -795,14 +874,11 @@ def main() -> None:
                     "sabablar bor. Tez yechim: sidebar → **Explorer** preset."
                 )
         else:
-            st.caption(
-                "Pastda jadvaldan keyin **yopiq bo‘limlar**: ularning sarlavhasiga bosing — ichida grafik, ChatGPT, "
-                "volume ignition matni."
-            )
+            st.caption("Avval `Paper=READY` va yuqori `Score` setup-larga qarang; qolgan tafsilotlar pastdagi bo‘limlarda.")
             st.dataframe(table, use_container_width=True, hide_index=True)
 
             if st.session_state.get("platform_show_3d", False):
-                with st.expander("3D signal manzarasi (Scatter3d — narx × RVOL × skor)", expanded=False):
+                with st.expander("3D va 2D signal fokus manzarasi", expanded=False):
                     render_signals_spatial_landscape(signals)
 
             if _intraday_strategy_mode(str(current_mode)):
