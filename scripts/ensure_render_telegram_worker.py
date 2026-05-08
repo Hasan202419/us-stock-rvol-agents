@@ -238,17 +238,17 @@ def _build_add_env() -> list[dict[str, str]]:
             continue
         rows.append({"key": key, "value": val})
 
-    # Worker skan rejimi uchun xavfsiz defaultlar (bo'sh qolsa eski "Balanced/80" holatiga qaytmasin).
+    # Worker skan rejimi uchun qat'iy override: lokal `.env`da eski qiymat bo'lsa ham Renderda Explorer ishlasin.
     forced_defaults = {
         "TELEGRAM_SCAN_PRESET": "Explorer",
         "TELEGRAM_FORCE_EXPLORER": "true",
         "TELEGRAM_MAX_SYMBOLS": "200",
         "TELEGRAM_MAX_SYMBOLS_ALL": "1200",
     }
-    existing = {r["key"] for r in rows}
+    rows_by_key: dict[str, dict[str, str]] = {r["key"]: r for r in rows}
     for k, v in forced_defaults.items():
-        if k not in existing:
-            rows.append({"key": k, "value": v})
+        rows_by_key[k] = {"key": k, "value": v}
+    rows = list(rows_by_key.values())
     return rows
 
 
