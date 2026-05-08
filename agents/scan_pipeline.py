@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -87,6 +88,89 @@ def _email_or_telegram_top_n_for_alerts() -> int:
     return _env_int_bounded("TELEGRAM_ALERT_TOP_N", 3, 1, 50)
 
 
+def _env_truthy_scan(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_truthy_scan_default(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _apply_analyst_fields(
+    signal: Dict[str, Any],
+    analyst_view: Dict[str, Any],
+    *,
+    strategy_passed: bool,
+) -> Tuple[str, str, bool, bool, str]:
+    """LLM javoblarini signalga yozadi; strategy o'tmagan qatorlarda paper trade doim blok."""
+
+    hard_flags = [str(x) for x in (analyst_view.get("risk_flags_hard") or []) if str(x).strip()]
+    paper_block = analyst_view.get("paper_ready_blocked")
+
+    paper_trade_ready = False
+    paper_trade_block_reason = ""
+
+    if strategy_passed:
+        paper_trade_ready = bool(
+            analyst_view.get("allow_order")
+            and analyst_view.get("decision") in {"WATCH", "STRONG_WATCH"}
+            and not hard_flags
+            and not paper_block
+        )
+        if not paper_trade_ready:
+            if paper_block:
+                paper_trade_block_reason = f"PAPER readiness blocked: {paper_block}"
+            elif hard_flags:
+                paper_trade_block_reason = f"Hard AI risk_flags: {'; '.join(hard_flags)}"
+            elif analyst_view.get("decision") not in {"WATCH", "STRONG_WATCH"}:
+                paper_trade_block_reason = f"AI decision: {analyst_view.get('decision')}"
+            else:
+                paper_trade_block_reason = "AI analyst did not allow this setup for consideration."
+    else:
+        paper_trade_block_reason = "Strategy Pass: Yo'q — LLM fikri faqat fon (paper trade yo'q)."
+
+    lineage = {
+        "strategy_name": signal.get("strategy_name"),
+        "daily_bar_ts": signal.get("daily_bar_timestamp_ms"),
+        "daily_ema_9": signal.get("daily_ema_9"),
+        "daily_rsi_14": signal.get("daily_rsi_14"),
+        "daily_atr_14": signal.get("daily_atr_14"),
+        "session_vwap": signal.get("session_vwap"),
+        "rsi_14": signal.get("rsi_14"),
+        "atr_14": signal.get("atr_14"),
+        "ignition_trend_stage": signal.get("ignition_trend_stage"),
+        "ignition_distance_to_resistance_pct": signal.get("ignition_distance_to_resistance_pct"),
+        "volume_pattern_summary": signal.get("volume_pattern_summary"),
+        "ignition_continuation_probability": signal.get("ignition_continuation_probability"),
+    }
+    signal.update(
+        {
+            "chatgpt_decision": analyst_view["decision"],
+            "chatgpt_confidence": analyst_view["confidence"],
+            "chatgpt_reason": analyst_view["reason"],
+            "risk_level": analyst_view["risk_level"],
+            "chatgpt_allow_order": analyst_view["allow_order"],
+            "chatgpt_risk_flags_json": json.dumps(analyst_view.get("risk_flags") or []),
+            "chatgpt_risk_flags_hard_json": json.dumps(analyst_view.get("risk_flags_hard") or []),
+            "chatgpt_entry_condition": analyst_view.get("entry_condition", ""),
+            "paper_ready_blocked_field": analyst_view.get("paper_ready_blocked"),
+            "paper_trade_ready": paper_trade_ready,
+            "paper_trade_block_reason": paper_trade_block_reason,
+            "indicator_lineage_json": json.dumps(lineage, default=str),
+        }
+    )
+    return (
+        str(analyst_view.get("decision") or ""),
+        str(analyst_view.get("risk_level") or ""),
+        bool(analyst_view.get("allow_order")),
+        paper_trade_ready,
+        paper_trade_block_reason,
+    )
+
+
 def build_scan_agents(repo_root: Path) -> Dict[str, Any]:
     logs = repo_root / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -109,7 +193,11 @@ def run_scan_market(
     repo_root: Path,
     progress: Any = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
-    """Streamlit progress obyektini `progress` bilan berishingiz mumkin (`.progress`, `.empty`); aks holda None."""
+    """Streamlit progress obyektini `progress` bilan berishingiz mumkin (`.progress`, `.empty`); aks holda None.
+
+    `SCAN_AI_INCLUDE_FAILS=true` bo'lsa, strategiya o'tmagan qatorlar uchun ham LLM chaqiriladi
+    (faqat to'liq skan jadvali / log; asosiy `signals` ro'yxati hanuz faqat pass qatorlar).
+    """
 
     agents = build_scan_agents(repo_root)
     signals: List[Dict[str, Any]] = []
@@ -171,7 +259,32 @@ def run_scan_market(
             completed += 1
             _prog(completed / max(len(tickers), 1), f"Stage 1 · {completed}/{len(tickers)} tickers prepared")
 
-    _prog(1.0, "Stage 2 · running ChatGPT on passes…")
+    relaxed_fallback_enabled = _env_truthy_scan_default("SCAN_RELAX_ON_EMPTY", True)
+    relaxed_fallback_applied = False
+    if (
+        relaxed_fallback_enabled
+        and results
+        and hasattr(rvol_strategy, "evaluate")
+        and not any(bool(item.get("strategy_pass")) for item in results.values())
+    ):
+        # Intraday/strict kunlarda bo'sh jadval chiqmasin: Explorer + yumshoq change bilan RVOL fallback.
+        relaxed_thresholds = dict(SCAN_PRESETS.get("Explorer") or {})
+        relaxed_thresholds["min_change_percent"] = min(float(relaxed_thresholds.get("min_change_percent", -3.0)), -5.0)
+        for symbol in tickers:
+            relaxed_signal = rvol_strategy.evaluate(results[symbol], relaxed_thresholds)
+            if relaxed_signal.get("strategy_pass"):
+                relaxed_signal["strategy_name"] = "rvol_relaxed_fallback"
+                relaxed_signal["relaxed_fallback"] = True
+                results[symbol] = relaxed_signal
+                relaxed_fallback_applied = True
+
+    include_ai_on_fails = _env_truthy_scan("SCAN_AI_INCLUDE_FAILS")
+    stage2_label = (
+        "Stage 2 · LLM (pass + strategy-fail)"
+        if include_ai_on_fails
+        else "Stage 2 · running ChatGPT on passes…"
+    )
+    _prog(1.0, stage2_label)
 
     for symbol in tickers:
         signal = results[symbol]
@@ -179,41 +292,21 @@ def run_scan_market(
         analyst_reason = ""
         risk_level_value = ""
         chatgpt_allow = False
+        paper_trade_ready = False
+        paper_trade_block_reason = ""
 
-        if signal.get("strategy_pass"):
+        passed = bool(signal.get("strategy_pass"))
+        if passed:
             analyst_view = agents["analyst"].analyze(signal)
-            lineage = {
-                "strategy_name": signal.get("strategy_name"),
-                "daily_bar_ts": signal.get("daily_bar_timestamp_ms"),
-                "daily_ema_9": signal.get("daily_ema_9"),
-                "daily_rsi_14": signal.get("daily_rsi_14"),
-                "daily_atr_14": signal.get("daily_atr_14"),
-                "session_vwap": signal.get("session_vwap"),
-                "rsi_14": signal.get("rsi_14"),
-                "atr_14": signal.get("atr_14"),
-                "ignition_trend_stage": signal.get("ignition_trend_stage"),
-                "ignition_distance_to_resistance_pct": signal.get("ignition_distance_to_resistance_pct"),
-                "volume_pattern_summary": signal.get("volume_pattern_summary"),
-                "ignition_continuation_probability": signal.get("ignition_continuation_probability"),
-            }
-            signal.update(
-                {
-                    "chatgpt_decision": analyst_view["decision"],
-                    "chatgpt_confidence": analyst_view["confidence"],
-                    "chatgpt_reason": analyst_view["reason"],
-                    "risk_level": analyst_view["risk_level"],
-                    "chatgpt_allow_order": analyst_view["allow_order"],
-                    "chatgpt_risk_flags_json": json.dumps(analyst_view.get("risk_flags") or []),
-                    "chatgpt_risk_flags_hard_json": json.dumps(analyst_view.get("risk_flags_hard") or []),
-                    "chatgpt_entry_condition": analyst_view.get("entry_condition", ""),
-                    "paper_ready_blocked_field": analyst_view.get("paper_ready_blocked"),
-                    "indicator_lineage_json": json.dumps(lineage, default=str),
-                }
+            analyst_decision, risk_level_value, chatgpt_allow, paper_trade_ready, paper_trade_block_reason = (
+                _apply_analyst_fields(signal, analyst_view, strategy_passed=True)
             )
-            analyst_decision = analyst_view["decision"]
-            risk_level_value = analyst_view["risk_level"]
-            chatgpt_allow = bool(analyst_view["allow_order"])
             signals.append(signal)
+        elif include_ai_on_fails:
+            analyst_view = agents["analyst"].analyze(signal)
+            analyst_decision, risk_level_value, chatgpt_allow, paper_trade_ready, paper_trade_block_reason = (
+                _apply_analyst_fields(signal, analyst_view, strategy_passed=False)
+            )
 
         failed_rules = ",".join(signal.get("failed_rules") or [])
 
@@ -242,8 +335,12 @@ def run_scan_market(
                 "indicator_lineage_json": signal.get("indicator_lineage_json", ""),
                 "risk_level": risk_level_value,
                 "chatgpt_allow_order": chatgpt_allow,
+                "paper_trade_ready": paper_trade_ready,
+                "paper_trade_block_reason": paper_trade_block_reason,
                 "data_delay": signal.get("data_delay"),
                 "updated_time": signal.get("updated_time"),
+                "quote_source": signal.get("quote_source"),
+                "candles_source": signal.get("candles_source"),
             }
         )
 
@@ -269,6 +366,8 @@ def run_scan_market(
                 "Ign R dist%": signal.get("ignition_distance_to_resistance_pct"),
                 "ChatGPT Decision": analyst_decision or "—",
                 "Risk Level": risk_level_value or "—",
+                "Paper Ready": "Yes" if paper_trade_ready else "No",
+                "Paper Block": paper_trade_block_reason or "—",
                 "Data Delay": signal.get("data_delay"),
                 "Updated Time": signal.get("updated_time"),
             }
@@ -280,6 +379,30 @@ def run_scan_market(
     agents["logger"].save_signals(signals)
     agents["logger"].save_full_scan(full_scan_logs)
     ranked_signals = sorted(signals, key=lambda item: item.get("score", 0), reverse=True)
+    if not ranked_signals and _env_truthy_scan_default("SCAN_SHOW_WATCHLIST_ON_EMPTY", True):
+        # Bozor sust paytda ham foydalanuvchi bo'sh jadval ko'rmasin:
+        # eng yaqin kandidatlarni WATCHLIST sifatida qaytaramiz (paper-ready emas).
+        candidate_pool = [results[s] for s in tickers if not bool(results[s].get("strategy_pass"))]
+        candidate_pool = sorted(
+            candidate_pool,
+            key=lambda item: (
+                float(item.get("score") or 0),
+                float(item.get("rvol") or 0),
+                float(item.get("change_percent") or 0),
+                float(item.get("volume") or 0),
+            ),
+            reverse=True,
+        )
+        top_watch = _env_int_bounded("SCAN_EMPTY_WATCHLIST_TOP_N", 12, 3, 30)
+        ranked_signals = []
+        for item in candidate_pool[:top_watch]:
+            cloned = dict(item)
+            cloned["watchlist_only"] = True
+            cloned["paper_trade_ready"] = False
+            cloned["paper_trade_block_reason"] = "Watchlist only: strategy filtersdan to'liq o'tmagan."
+            cloned["chatgpt_decision"] = cloned.get("chatgpt_decision") or "WATCHLIST"
+            ranked_signals.append(cloned)
+    paper_ready_count = sum(1 for item in signals if item.get("paper_trade_ready"))
 
     if os.getenv("TELEGRAM_ALERT_ON_SCAN", "").strip().lower() in {"1", "true", "yes", "on"}:
         tg = TelegramAlertsAgent()
@@ -287,6 +410,7 @@ def run_scan_market(
             {
                 "tickers_scanned": scanned,
                 "eligible_signals": len(signals),
+                "paper_ready_signals": paper_ready_count,
                 "strategy_mode": strategy_mode,
             }
         )
@@ -300,6 +424,7 @@ def run_scan_market(
             {
                 "tickers_scanned": scanned,
                 "eligible_signals": len(signals),
+                "paper_ready_signals": paper_ready_count,
                 "strategy_mode": strategy_mode,
             }
         )
@@ -308,6 +433,7 @@ def run_scan_market(
     summary = {
         "tickers_scanned": scanned,
         "eligible_signals": len(signals),
+        "paper_ready_signals": paper_ready_count,
         "failed_signals": scanned - len(signals),
         "symbols_input": scanned,
         "strategy_mode": strategy_mode,
@@ -315,6 +441,27 @@ def run_scan_market(
         "parallel_workers": controls.max_workers,
         "rvol_thresholds": controls.rvol_thresholds,
         "desk_label": controls.desk_label,
+        "relaxed_fallback_applied": relaxed_fallback_applied,
+    }
+    failed_counter: Counter[str] = Counter()
+    quote_source_counter: Counter[str] = Counter()
+    candles_source_counter: Counter[str] = Counter()
+    for row in full_scan_logs:
+        raw_failed = str(row.get("failed_rules") or "").strip()
+        if raw_failed:
+            for token in [x.strip() for x in raw_failed.split(",") if x.strip()]:
+                failed_counter[token] += 1
+        qsrc = str(row.get("quote_source") or "").strip()
+        csrc = str(row.get("candles_source") or "").strip()
+        if qsrc:
+            quote_source_counter[qsrc] += 1
+        if csrc:
+            candles_source_counter[csrc] += 1
+
+    summary["top_failed_rules"] = failed_counter.most_common(5)
+    summary["provider_source_summary"] = {
+        "quote": dict(quote_source_counter),
+        "candles": dict(candles_source_counter),
     }
     return ranked_signals, full_scan_views, summary
 
@@ -322,12 +469,15 @@ def run_scan_market(
 def telegram_default_controls() -> SidebarControls:
     """Telegram `/scan` uchun .env asosidagi sukutlar."""
 
-    preset = os.getenv("TELEGRAM_SCAN_PRESET", "Balanced").strip()
+    preset = os.getenv("TELEGRAM_SCAN_PRESET", "Explorer").strip()
+    force_explorer = _env_truthy_scan_default("TELEGRAM_FORCE_EXPLORER", True)
+    if force_explorer and preset.lower() == "balanced":
+        preset = "Explorer"
     if preset not in SCAN_PRESETS:
-        preset = "Balanced"
+        preset = "Explorer"
     return SidebarControls(
         desk_label=os.getenv("TELEGRAM_DESK_LABEL", "TG scan").strip() or "TG scan",
-        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 80, 10, 400),
+        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 200, 10, 3000),
         preset_name=preset,
         rvol_thresholds=dict(SCAN_PRESETS[preset]),
         max_workers=_env_int_bounded("SCAN_MAX_WORKERS", 10, 2, 20),
