@@ -260,6 +260,11 @@ def _build_add_env() -> list[dict[str, str]]:
         "TELEGRAM_BOT_TOP_ROWS": "6",
         "TELEGRAM_ALERT_TOP_N": "6",
         "SCAN_EMPTY_WATCHLIST_TOP_N": "6",
+        # Babir uslubi: worker fonida muntazam skan + ~6 ta ticker (chat: TELEGRAM_CHAT_ID yoki TELEGRAM_AUTO_PUSH_CHAT_ID .env dan).
+        "TELEGRAM_AUTO_PUSH_ENABLED": "true",
+        "TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES": "1440",
+        "TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC": "120",
+        "TELEGRAM_AUTO_PUSH_USE_SCANALL": "false",
     }
     rows_by_key: dict[str, dict[str, str]] = {r["key"]: r for r in rows}
     for k, v in forced_defaults.items():
