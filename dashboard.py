@@ -589,7 +589,9 @@ def render_sidebar() -> SidebarControls:
         f"Yahoo fallback: `YAHOO_FINANCE_ENABLED={os.getenv('YAHOO_FINANCE_ENABLED', 'true')}`."
     )
 
-    max_symbols = st.sidebar.slider("Skan qilinadigan tickers", min_value=10, max_value=3000, value=300, step=10)
+    max_symbols = st.sidebar.slider(
+        "Skan qilinadigan tickers", min_value=10, max_value=15000, value=300, step=10
+    )
     st.sidebar.caption("Katta qiymatlar (1000+) barcha US aksiyalariga yaqinroq qamrov beradi, lekin vaqt ko‘proq oladi.")
 
     _fa = os.getenv("FINVIZ_ELITE_AUTH", "").strip()

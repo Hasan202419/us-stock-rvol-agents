@@ -134,9 +134,13 @@ services:
       - key: TELEGRAM_FORCE_EXPLORER
         value: "true"
       - key: TELEGRAM_MAX_SYMBOLS
-        value: "200"
+        value: "12000"
       - key: TELEGRAM_MAX_SYMBOLS_ALL
-        value: "1200"
+        value: "15000"
+      - key: TELEGRAM_AUTO_PUSH_USE_SCANALL
+        value: "true"
+      - key: SCAN_MAX_WORKERS
+        value: "12"
       - key: TELEGRAM_DESK_LABEL
         value: TG scan
       - key: TELEGRAM_ALERT_ON_SCAN

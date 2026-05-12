@@ -119,6 +119,19 @@ class MarketDataAgent:
         avg_volume = self._average_volume(candles) or snapshot.get("previous_volume") or volume
         change_percent = self._change_percent(price, previous_close)
 
+        quote_source = "unknown"
+        for provider in priority:
+            candidate = fetched_quotes.get(provider) or {}
+            if float(candidate.get("price") or 0) > 0:
+                quote_source = provider
+                break
+        candles_source = "unknown"
+        for provider in priority:
+            candidate = fetched_candles.get(provider) or {}
+            if candidate.get("candles"):
+                candles_source = provider
+                break
+
         return {
             "ticker": ticker,
             "price": round(price, 4),
@@ -129,6 +142,9 @@ class MarketDataAgent:
             "candles": candles,
             "data_delay": f"{self.data_delay_minutes}-minute delayed",
             "updated_time": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "quote_source": quote_source,
+            "candles_source": candles_source,
+            "provider_priority": list(priority),
         }
 
     def _fetch_finnhub_quote(self, ticker: str) -> Dict[str, float]:

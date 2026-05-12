@@ -32,8 +32,40 @@ class UniverseAgent:
         if symbols:
             return symbols
 
-        # A small fallback keeps the demo usable while API keys are being added.
-        return ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "META", "AMZN", "GOOGL"][:limit]
+        # Fallback without paid feeds: keep a broader, liquid universe so scans are less likely to return empty.
+        fallback_symbols = [
+            "AAPL",
+            "MSFT",
+            "NVDA",
+            "AMZN",
+            "META",
+            "GOOGL",
+            "TSLA",
+            "AMD",
+            "NFLX",
+            "AVGO",
+            "QCOM",
+            "INTC",
+            "MU",
+            "PLTR",
+            "SMCI",
+            "UBER",
+            "CRM",
+            "ORCL",
+            "JPM",
+            "BAC",
+            "XOM",
+            "CVX",
+            "KO",
+            "PEP",
+            "WMT",
+            "COST",
+            "DIS",
+            "NKE",
+            "PYPL",
+            "SHOP",
+        ]
+        return fallback_symbols[:limit]
 
     def _fetch_from_finviz_elite(self, limit: int) -> List[str]:
         if not self.finviz_auth or not self.finviz_export_query:
@@ -80,20 +112,47 @@ class UniverseAgent:
         if not self.polygon_api_key:
             return []
 
+        page_size = min(max(100, limit), 1000)
         url = "https://api.polygon.io/v3/reference/tickers"
         params = {
             "market": "stocks",
             "active": "true",
             "locale": "us",
-            "limit": min(limit, 1000),
+            "limit": page_size,
             "apiKey": self.polygon_api_key,
         }
 
-        try:
-            response = requests.get(url, params=params, timeout=15)
-            response.raise_for_status()
-            results = response.json().get("results", [])
-        except requests.RequestException:
-            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        next_url: str | None = None
+        pages = 0
+        # Polygon sahifalari o'zgaruvchan bo'lishi mumkin; katta limitda yetarli aylanish.
+        max_pages = max(10, (limit + page_size - 1) // page_size + 15)
 
-        return sorted(item["ticker"] for item in results if item.get("ticker"))[:limit]
+        while pages < max_pages and len(out) < limit:
+            try:
+                if next_url:
+                    response = requests.get(next_url, timeout=20)
+                else:
+                    response = requests.get(url, params=params, timeout=20)
+                response.raise_for_status()
+                payload = response.json()
+            except requests.RequestException:
+                break
+
+            for item in payload.get("results", []) or []:
+                ticker = str(item.get("ticker") or "").strip().upper()
+                if not ticker or ticker in seen:
+                    continue
+                seen.add(ticker)
+                out.append(ticker)
+                if len(out) >= limit:
+                    break
+
+            raw_next = payload.get("next_url")
+            if not raw_next or len(out) >= limit:
+                break
+            next_url = f"{raw_next}&apiKey={self.polygon_api_key}" if "apiKey=" not in raw_next else raw_next
+            pages += 1
+
+        return sorted(out)[:limit]

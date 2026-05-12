@@ -122,6 +122,94 @@ def test_run_scan_market_adds_paper_trade_fields(monkeypatch, tmp_path: Path) ->
     assert full_scan_views[0]["Paper Ready"] == "Yes"
 
 
+def test_scan_ai_include_fails_calls_llm_on_strategy_fail(monkeypatch, tmp_path: Path) -> None:
+    """SCAN_AI_INCLUDE_FAILS=true — Strategiya o'tmagan tickerlar ham LLM dan fikr oladi (jadvalda)."""
+
+    import agents.scan_pipeline as sp
+
+    class DummyMarketData:
+        data_delay_minutes = 15
+
+        def fetch_market_data(self, symbol: str) -> dict:
+            return {"symbol": symbol}
+
+    class DummyRVOL:
+        def calculate(self, market_data: dict) -> dict:
+            return market_data
+
+    ai_calls: list[str] = []
+
+    class DummyAnalyst:
+        def analyze(self, signal: dict) -> dict:
+            ai_calls.append(str(signal.get("ticker")))
+            return {
+                "decision": "AVOID",
+                "confidence": 2,
+                "reason": "Filtered out.",
+                "risk_level": "HIGH",
+                "allow_order": False,
+                "risk_flags": [],
+                "risk_flags_hard": [],
+                "entry_condition": "",
+                "paper_ready_blocked": None,
+                "paper_ready_explicit": False,
+            }
+
+    class DummyLogger:
+        def save_signals(self, _signals) -> None:
+            return None
+
+        def save_full_scan(self, _rows) -> None:
+            return None
+
+    monkeypatch.setenv("SCAN_AI_INCLUDE_FAILS", "true")
+    monkeypatch.setattr(sp, "StrategyAgent", lambda: object())
+    monkeypatch.setattr(sp, "VwapBreakoutStrategyAgent", lambda: object())
+    monkeypatch.setattr(sp, "VolumeIgnitionStrategyAgent", lambda: object())
+    monkeypatch.setattr(sp, "resolve_strategy_mode", lambda: "rvol")
+    monkeypatch.setattr(
+        sp,
+        "build_scan_agents",
+        lambda repo_root: {
+            "market_data": DummyMarketData(),
+            "rvol": DummyRVOL(),
+            "analyst": DummyAnalyst(),
+            "logger": DummyLogger(),
+        },
+    )
+    monkeypatch.setattr(
+        sp,
+        "run_stage_one_strategy",
+        lambda *args, **kwargs: {
+            "ticker": "ZZZ",
+            "strategy_pass": False,
+            "failed_rules": ["rvol_low"],
+            "score": 1,
+            "price": 5.0,
+            "change_percent": 0.0,
+            "volume": 1000,
+            "avg_volume": 2000,
+            "rvol": 0.5,
+            "strategy_name": "rvol_momentum",
+        },
+    )
+
+    controls = SidebarControls(
+        desk_label="Desk",
+        max_symbols=1,
+        preset_name="Balanced",
+        rvol_thresholds=dict(SCAN_PRESETS["Balanced"]),
+        max_workers=2,
+        finviz_csv_universe=False,
+    )
+    ranked, full_scan_views, summary = sp.run_scan_market(["ZZZ"], controls, repo_root=tmp_path, progress=None)
+    assert ai_calls == ["ZZZ"]
+    assert ranked == []
+    assert summary["eligible_signals"] == 0
+    assert full_scan_views[0]["ChatGPT Decision"] == "AVOID"
+    assert full_scan_views[0]["Strategy Pass"] == "No"
+
+
 def test_telegram_alert_logs_non_2xx(monkeypatch, capsys) -> None:
     class DummyResponse:
         ok = False
@@ -159,4 +247,6 @@ def test_market_data_provider_priority_accepts_massive_alias(monkeypatch) -> Non
     monkeypatch.setattr(agent, "_fetch_polygon_daily_candles", lambda ticker: order.append("polygon_candles") or [])
 
     agent.fetch_market_data("AAPL")
-    assert order[:3] == ["polygon", "yahoo", "polygon_candles"]
+    # Har bir prioritetda avval kotirovka, keyin (mavjud bo‘lsa) shamlar — Yahoo ikkalasida ham bir xil `_fetch_yahoo_daily_bundle`.
+    assert order[:3] == ["polygon", "polygon_candles", "yahoo"]
+    assert order[3] == "yahoo"

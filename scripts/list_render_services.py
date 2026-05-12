@@ -22,19 +22,9 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from agents.bootstrap_env import ensure_env_file, load_project_env  # noqa: E402
+from agents.render_api_parse import iter_service_dicts, next_cursor_from_page  # noqa: E402
 
 LIST_URL = "https://api.render.com/v1/services"
-
-
-def _iter_service_dicts(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [x for x in payload if isinstance(x, dict)]
-    if isinstance(payload, dict):
-        for key in ("service", "services", "items"):
-            block = payload.get(key)
-            if isinstance(block, list):
-                return [x for x in block if isinstance(x, dict)]
-    return []
 
 
 def main() -> int:
@@ -71,7 +61,7 @@ def main() -> int:
             response = requests.get(LIST_URL, headers=headers, params=params, timeout=60)
             response.raise_for_status()
             payload = response.json()
-            batch = _iter_service_dicts(payload)
+            batch = iter_service_dicts(payload)
 
             for item in batch:
                 sid = str(item.get("id") or "")
@@ -83,11 +73,7 @@ def main() -> int:
                 stype = str(item.get("type") or "")
                 collected.append({"id": sid, "name": name, "type": stype})
 
-            next_c: str | None = None
-            if isinstance(payload, dict):
-                c = payload.get("cursor")
-                if isinstance(c, str) and c:
-                    next_c = c
+            next_c = next_cursor_from_page(payload)
             if not next_c or next_c == cursor or not batch:
                 break
             cursor = next_c

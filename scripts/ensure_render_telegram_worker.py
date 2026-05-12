@@ -67,6 +67,7 @@ _WORKER_ENV_KEYS: tuple[str, ...] = (
     "MARKET_HTTP_BACKOFF_BASE_SEC",
     "STRATEGY_MODE",
     "SCAN_AI_INCLUDE_FAILS",
+    "SCAN_MAX_WORKERS",
     "INTRADAY_TIMEFRAME_MINUTES",
     "INTRADAY_LOOKBACK_DAYS",
     "DATABASE_URL",
@@ -83,6 +84,8 @@ _WORKER_ENV_KEYS: tuple[str, ...] = (
     "TELEGRAM_AUTO_PUSH_CHAT_ID",
     "TELEGRAM_AUTO_PUSH_USE_SCANALL",
     "TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC",
+    "TELEGRAM_AUTO_PUSH_AT",
+    "TELEGRAM_AUTO_PUSH_TZ",
     "SCAN_EMPTY_WATCHLIST_TOP_N",
     "SCAN_SHOW_WATCHLIST_ON_EMPTY",
     "TELEGRAM_SCAN_PRESET",
@@ -249,22 +252,23 @@ def _build_add_env() -> list[dict[str, str]]:
     forced_defaults = {
         "TELEGRAM_SCAN_PRESET": "Explorer",
         "TELEGRAM_FORCE_EXPLORER": "true",
-        "TELEGRAM_MAX_SYMBOLS": "500",
-        "TELEGRAM_MAX_SYMBOLS_ALL": "3000",
+        "TELEGRAM_MAX_SYMBOLS": "12000",
+        "TELEGRAM_MAX_SYMBOLS_ALL": "15000",
         "MARKET_DATA_PROVIDER_PRIORITY": "polygon,alpaca,yahoo,finnhub,alpha_vantage",
         # Finviz filter tor bo'lib qolsa universe 3-4 tickerga tushib ketmasligi uchun default o'chiriladi.
         "FETCH_UNIVERSE_FINVIZ_FIRST": "false",
         "TELEGRAM_USE_FINVIZ_CSV": "false",
         "SCAN_RELAX_ON_EMPTY": "true",
-        "TELEGRAM_BOT_REPLY_TOP_N": "6",
-        "TELEGRAM_BOT_TOP_ROWS": "6",
-        "TELEGRAM_ALERT_TOP_N": "6",
-        "SCAN_EMPTY_WATCHLIST_TOP_N": "6",
+        "TELEGRAM_BOT_REPLY_TOP_N": "10",
+        "TELEGRAM_BOT_TOP_ROWS": "10",
+        "TELEGRAM_ALERT_TOP_N": "10",
+        "SCAN_EMPTY_WATCHLIST_TOP_N": "10",
         # Babir uslubi: worker fonida muntazam skan + ~6 ta ticker (chat: TELEGRAM_CHAT_ID yoki TELEGRAM_AUTO_PUSH_CHAT_ID .env dan).
         "TELEGRAM_AUTO_PUSH_ENABLED": "true",
         "TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES": "1440",
         "TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC": "120",
-        "TELEGRAM_AUTO_PUSH_USE_SCANALL": "false",
+        "TELEGRAM_AUTO_PUSH_USE_SCANALL": "true",
+        "SCAN_MAX_WORKERS": "12",
     }
     rows_by_key: dict[str, dict[str, str]] = {r["key"]: r for r in rows}
     for k, v in forced_defaults.items():

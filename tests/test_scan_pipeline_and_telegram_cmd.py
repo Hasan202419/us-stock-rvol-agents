@@ -70,7 +70,7 @@ def test_telegram_default_controls_fallback(monkeypatch: pytest.MonkeyPatch) -> 
     c = telegram_default_controls()
     assert c.max_symbols >= 10
     assert 2 <= c.max_workers <= 20
-    assert c.preset_name == "Balanced"
+    assert c.preset_name == "Explorer"
 
 
 def test_fetch_universe_for_scan(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,6 +96,15 @@ def test_fetch_universe_for_scan(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls == [(50, False)]
 
 
+def test_parse_auto_push_at() -> None:
+    bot = _load_command_bot_script()
+    assert bot._parse_auto_push_at("18:30") == (18, 30)
+    assert bot._parse_auto_push_at("9:05") == (9, 5)
+    assert bot._parse_auto_push_at("") is None
+    assert bot._parse_auto_push_at("25:00") is None
+    assert bot._parse_auto_push_at("12:99") is None
+
+
 def test_telegram_command_from_text_basic() -> None:
     bot = _load_command_bot_script()
     assert bot._command_from_text("/help")[0] == "help"
@@ -118,3 +127,21 @@ def test_parse_allowed_chat_ids_supergroup(monkeypatch: pytest.MonkeyPatch) -> N
     bot = _load_command_bot_script()
     s = bot._parse_allowed_chat_ids()
     assert s == {"-1001234567890", "987654321"}
+
+
+def test_effective_allowed_bot_id_only_opens_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bot token oldidagi raqamni chat ID deb qo‘yish — filtrni bekor qilamiz."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "7839339510:AA_testfake")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "7839339510")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "7839339510")
+    bot = _load_command_bot_script()
+    assert bot._effective_allowed_chat_ids("7839339510:AA_testfake") is None
+
+
+def test_effective_allowed_keeps_real_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "7839339510:AA_testfake")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "111222333")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "444555666")
+    bot = _load_command_bot_script()
+    got = bot._effective_allowed_chat_ids("7839339510:AA_testfake")
+    assert got == {"111222333", "444555666"}

@@ -44,7 +44,14 @@ class ChatGPTAnalystAgent:
         if provider == "openai":
             use_deepseek = False
         elif provider == "deepseek":
-            use_openai = False
+            # DeepSeek ustun; kaliti yo‘q bo‘lsa OpenAI fallback (faqat OPENAI kalit mavjud bo‘lsa).
+            if use_deepseek:
+                use_openai = False
+        elif provider == "auto":
+            # Ikkala kalit ham bo'lsa: avvalo DeepSeek (OPENAI ko'pincha noto'g'ri/namuna; DeepSeek ishlaydi).
+            # Faqat OpenAI kerak bo'lsa: AI_PROVIDER=openai
+            if use_openai and use_deepseek:
+                use_openai = False
 
         if use_openai:
             self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -60,7 +67,7 @@ class ChatGPTAnalystAgent:
 
     def analyze(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         if not self.client:
-            return self._fallback("OpenAI API key is missing; AI analysis was skipped.")
+            return self._fallback("LLM kalitlari yo'q (DeepSeek yoki OpenAI); tahlil o'tkazildi.")
 
         news = self._fetch_news(signal["ticker"])
         prompt = {
@@ -121,7 +128,10 @@ class ChatGPTAnalystAgent:
                                 "decision,confidence,reason,risk_level,allow_order,"
                                 "risk_flags,risk_flags_hard,entry_condition,paper_ready_blocked. "
                                 "decision is WATCH, STRONG_WATCH, or AVOID. "
-                                "If reckless, populate risk_flags_hard with short uppercase codes."
+                                "If reckless, populate risk_flags_hard with short uppercase codes. "
+                                "Always include allow_order explicitly. "
+                                "Set allow_order=true only when the setup is WATCH/STRONG_WATCH, has no hard blockers, "
+                                "and is acceptable for paper-trade consideration."
                             ),
                         },
                         {"role": "user", "content": json.dumps(prompt, default=str)},
@@ -205,13 +215,20 @@ class ChatGPTAnalystAgent:
         blocked = data.get("paper_ready_blocked")
         entry_condition = str(data.get("entry_condition", "")).strip()
         explicit_ready = blocked in (None, "", []) and decision in {"WATCH", "STRONG_WATCH"} and not risk_flags_hard
+        raw_allow = data.get("allow_order")
+        if isinstance(raw_allow, bool):
+            allow_order = raw_allow
+        elif isinstance(raw_allow, str) and raw_allow.strip():
+            allow_order = raw_allow.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            allow_order = explicit_ready
 
         return {
             "decision": decision,
             "confidence": confidence,
             "reason": str(data.get("reason", "No reason supplied.")),
             "risk_level": risk_level,
-            "allow_order": bool(data.get("allow_order", False)),
+            "allow_order": allow_order,
             "risk_flags": risk_flags,
             "risk_flags_hard": risk_flags_hard,
             "entry_condition": entry_condition,

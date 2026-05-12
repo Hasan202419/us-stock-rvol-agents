@@ -16,7 +16,8 @@ class RiskManagerAgent:
     """Hard-coded trade gate that must approve every order."""
 
     def __init__(self, trades_log_path: str = "logs/trades.csv", repo_root: str | Path | None = None) -> None:
-        self.max_position_size_usd = float(os.getenv("MAX_POSITION_SIZE_USD", "100"))
+        # $100 default juda qattiq bo'lib, ko'p paper orderlarni bloklaydi; amaliy defaultni yuqoriroq qilamiz.
+        self.max_position_size_usd = float(os.getenv("MAX_POSITION_SIZE_USD", "10000"))
         self.max_daily_loss_usd = float(os.getenv("MAX_DAILY_LOSS_USD", "50"))
         self.max_trades_per_day = int(os.getenv("MAX_TRADES_PER_DAY", "5"))
         self.trades_log_path = Path(trades_log_path)
@@ -56,7 +57,12 @@ class RiskManagerAgent:
             return False, "Kill switch is active — no new trades."
 
         if not analyst_view.get("allow_order", False):
-            return False, "AI analyst did not allow this setup for consideration."
+            decision = str(analyst_view.get("decision") or "—").upper()
+            analyst_reason = str(analyst_view.get("reason") or "").strip()
+            extra = f" decision={decision}." if decision and decision != "—" else ""
+            if analyst_reason:
+                extra += f" Reason: {analyst_reason}"
+            return False, f"AI analyst did not allow this setup for consideration.{extra}".strip()
 
         if analyst_view.get("decision") not in {"WATCH", "STRONG_WATCH"}:
             return False, "AI analyst decision is not watch-worthy."

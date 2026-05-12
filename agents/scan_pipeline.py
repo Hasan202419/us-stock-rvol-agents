@@ -411,7 +411,12 @@ def run_scan_market(
     agents["logger"].save_signals(signals)
     agents["logger"].save_full_scan(full_scan_logs)
     ranked_signals = sorted(signals, key=lambda item: item.get("score", 0), reverse=True)
-    if not ranked_signals and _env_truthy_scan_default("SCAN_SHOW_WATCHLIST_ON_EMPTY", True):
+    # Fail + LLM holatida full_scan yetarli; watchlist ranked ga qo'shilsa Telegram "signal" bilan aralashadi.
+    if (
+        not ranked_signals
+        and _env_truthy_scan_default("SCAN_SHOW_WATCHLIST_ON_EMPTY", True)
+        and not include_ai_on_fails
+    ):
         # Bozor sust paytda ham foydalanuvchi bo'sh jadval ko'rmasin:
         # eng yaqin kandidatlarni WATCHLIST sifatida qaytaramiz (paper-ready emas).
         candidate_pool = [results[s] for s in tickers if not bool(results[s].get("strategy_pass"))]
@@ -509,7 +514,7 @@ def telegram_default_controls() -> SidebarControls:
         preset = "Explorer"
     return SidebarControls(
         desk_label=os.getenv("TELEGRAM_DESK_LABEL", "TG scan").strip() or "TG scan",
-        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 200, 10, 3000),
+        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 200, 10, 15000),
         preset_name=preset,
         rvol_thresholds=dict(SCAN_PRESETS[preset]),
         max_workers=_env_int_bounded("SCAN_MAX_WORKERS", 10, 2, 20),

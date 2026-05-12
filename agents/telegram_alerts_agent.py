@@ -23,7 +23,8 @@ class TelegramAlertsAgent:
         text = (
             f"📡 Skan yakunlandi\n"
             f"• Tickers: {summary.get('tickers_scanned')}\n"
-            f"• Eligible: {summary.get('eligible_signals')}"
+            f"• Eligible: {summary.get('eligible_signals')}\n"
+            f"• Paper ready: {summary.get('paper_ready_signals', '—')}"
         )
         self._send(text)
 
@@ -39,10 +40,15 @@ class TelegramAlertsAgent:
 
     def _send(self, text: str) -> None:
         try:
-            requests.post(
+            response = requests.post(
                 f"https://api.telegram.org/bot{self.token}/sendMessage",
                 json={"chat_id": self.chat_id, "text": text[:3900]},
                 timeout=12,
             )
+            if not response.ok:
+                print(
+                    f"TelegramAlertsAgent sendMessage error: {response.status_code} {response.text[:300]}",
+                    flush=True,
+                )
         except requests.RequestException:
-            pass
+            print("TelegramAlertsAgent sendMessage request failed.", flush=True)

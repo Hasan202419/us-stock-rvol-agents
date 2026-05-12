@@ -1,7 +1,7 @@
 """Offline-friendly API sanity checks: prints statuses only (never prints secrets).
 
 Tekshiriladi (agar .env da bor bo'lsa): OpenAI, DeepSeek, Polygon, Finnhub, Alpaca,
-Yahoo Finance (yfinance), Alpha Vantage (ixtiyoriy), Render (account + service),
+Yahoo Finance (yfinance), Alpha Vantage (ixtiyoriy), Render (account + web service + telegram worker service),
 GitHub, Supabase, Telegram (getMe + getChat), SMTP email (sozlangan/bo‘sh), FMP, NewsAPI, Zoya. Oxirda xulosa: muvaffaqiyat / o'tkazilgan / xato.
 """
 
@@ -63,6 +63,7 @@ _ENV_KEY_NAMES = (
     "ALPACA_SECRET_KEY",
     "RENDER_API_KEY",
     "RENDER_SERVICE_ID",
+    "RENDER_WORKER_SERVICE_ID",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
     "FMP_API_KEY",
@@ -110,7 +111,7 @@ def looks_placeholder(name: str, value: str) -> bool:
         tok = value.strip()
         if len(tok) < 30 or ":" not in tok:
             return True
-    if name == "RENDER_SERVICE_ID":
+    if name in ("RENDER_SERVICE_ID", "RENDER_WORKER_SERVICE_ID"):
         sid = value.strip()
         if not sid.startswith("srv-") or len(sid) < 12:
             return True
@@ -136,6 +137,15 @@ def looks_placeholder(name: str, value: str) -> bool:
     return False
 
 
+def _env_truthy(name: str, *, default: bool = True) -> bool:
+    """.env dan ixtiyoriy yoqish/o‘chirish bayroqlari (ZOYA_ENABLED va hokazo)."""
+
+    v = os.getenv(name)
+    if v is None or not str(v).strip():
+        return default
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _classify_outcome(detail: str) -> str:
     """xulosa uchun: skip | pass | fail"""
 
@@ -144,7 +154,8 @@ def _classify_outcome(detail: str) -> str:
         return "skip"
     if "configured" in s:
         return "skip"
-    if s == "ok":
+    # "ok", "ok (~7 kunlik satr)" — matn bilan birga muvaffaqiyat
+    if s == "ok" or s.startswith("ok "):
         return "pass"
     if detail.startswith("http "):
         parts = detail.split()
@@ -195,11 +206,12 @@ def _log_duplicate_env_keys(env_path: Path) -> None:
 
 
 def main() -> int:
-    # UTF-8 konsol; bo‘lmasa log() stdout.buffer orqali UTF-8 yozadi.
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+    # UTF-8 konsol (Windows CP1252 da OpenAI/httpx loglari UnicodeEncodeError berishi mumkin).
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     root = _PROJECT_ROOT
     if ensure_env_file(root):
@@ -218,12 +230,17 @@ def main() -> int:
             line_st = raw_line.strip()
             if not line_st or line_st.startswith("#"):
                 continue
-            if line_st.startswith("RENDER_SERVICE_") and not line_st.startswith("RENDER_SERVICE_ID="):
-                log(
-                    "! .env nitpick: noto‘g‘ri kalit — `RENDER_SERVICE_ID` yozilishi kerak (ID yozuvi bilan). "
-                    "Sizda `RENDER_SERVICE_` bilan tugagan bo‘lishi mumkin."
-                )
-                break
+            if "=" in line_st:
+                key_part = line_st.split("=", 1)[0].strip()
+                if key_part.startswith("RENDER_SERVICE_") and key_part not in (
+                    "RENDER_SERVICE_ID",
+                    "RENDER_SERVICE_NAME",
+                ):
+                    log(
+                        "! .env nitpick: noto‘g‘ri Render kaliti — `RENDER_SERVICE_ID` yoki "
+                        "`RENDER_SERVICE_NAME` yoziladi; boshqa `RENDER_SERVICE_*` yoki kesilgan qatorni tekshiring."
+                    )
+                    break
 
     file_final = _dotenv_final_assignments(env_path) if env_path.is_file() else {}
 
@@ -264,6 +281,11 @@ def main() -> int:
     )
 
     render_sid_ok = not looks_placeholder("RENDER_SERVICE_ID", ck("RENDER_SERVICE_ID"))
+    render_worker_sid_ok = not looks_placeholder("RENDER_WORKER_SERVICE_ID", ck("RENDER_WORKER_SERVICE_ID"))
+
+    ai_provider = os.getenv("AI_PROVIDER", "auto").strip().lower()
+    # Runtime: auto + ikki kalit bo‘lsa DeepSeek ustun; deepseek rejimida OpenAI jonli probing shart emas.
+    skip_openai_probe = ai_provider == "deepseek" or (ai_provider == "auto" and deepseek_ok)
 
     log("--- live checks ---")
 
@@ -275,14 +297,24 @@ def main() -> int:
 
     finnhub_http: int | None = None
     fmp_http: int | None = None
+    zoya_http: int | None = None
+    openai_http: int | None = None
 
-    # OpenAI
-    if openai_ok:
+    # OpenAI — REST; `load_project_env` ASCII sanitizer. DeepSeek asosiy bo'lsa tekshiruv shart emas.
+    if skip_openai_probe:
+        track(
+            "openai",
+            "skipped (asosiy LLM DeepSeek — AI_PROVIDER=deepseek yoki auto+ikkala kalit; OpenAI jonli tekshirish shart emas)",
+        )
+    elif openai_ok:
         try:
-            from openai import OpenAI
-
-            OpenAI(api_key=ck("OPENAI_API_KEY")).models.list()
-            track("openai", "ok")
+            response = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {ck('OPENAI_API_KEY')}"},
+                timeout=25,
+            )
+            openai_http = response.status_code
+            track("openai", f"http {openai_http}")
         except Exception as exc:  # pragma: no cover - network path
             track("openai", f"fail ({type(exc).__name__})")
     else:
@@ -415,6 +447,23 @@ def main() -> int:
     else:
         track("render (service)", "skipped")
 
+    if render_ok and render_worker_sid_ok:
+        try:
+            wsid = ck("RENDER_WORKER_SERVICE_ID")
+            response = requests.get(
+                f"https://api.render.com/v1/services/{wsid}",
+                headers={
+                    "Authorization": f"Bearer {ck('RENDER_API_KEY')}",
+                    "Accept": "application/json",
+                },
+                timeout=20,
+            )
+            track("render (worker)", f"http {response.status_code}")
+        except Exception as exc:
+            track("render (worker)", f"fail ({type(exc).__name__})")
+    else:
+        track("render (worker)", "skipped")
+
     if telegram_token_ok:
         try:
             response = requests.get(
@@ -460,9 +509,10 @@ def main() -> int:
 
     if fmp_ok:
         try:
+            # Legacy /api/v3/* ko‘pincha 403 — FMP Stable API kerak (2025+ rejalar).
             response = requests.get(
-                "https://financialmodelingprep.com/api/v3/profile/AAPL",
-                params={"apikey": ck("FMP_API_KEY")},
+                "https://financialmodelingprep.com/stable/profile",
+                params={"symbol": "AAPL", "apikey": ck("FMP_API_KEY")},
                 timeout=20,
             )
             fmp_http = response.status_code
@@ -485,7 +535,9 @@ def main() -> int:
     else:
         track("newsapi", "skipped")
 
-    if zoya_ok:
+    if not _env_truthy("ZOYA_ENABLED", default=True):
+        track("zoya", "skipped (ZOYA_ENABLED=false — ixtiyoriy API)")
+    elif zoya_ok:
         try:
             response = requests.post(
                 "https://api.zoya.finance/graphql",
@@ -503,7 +555,8 @@ def main() -> int:
                 },
                 timeout=15,
             )
-            track("zoya", f"http {response.status_code}")
+            zoya_http = response.status_code
+            track("zoya", f"http {zoya_http}")
         except Exception as exc:
             track("zoya", f"fail ({type(exc).__name__})")
     else:
@@ -560,16 +613,37 @@ def main() -> int:
         )
     if finnhub_ok and finnhub_http == 401:
         log("finnhub: 401 = API kalit rad etilgan; https://finnhub.io/dashboard dan yangi token oling.")
+    if openai_ok and openai_http == 401:
+        log(
+            "openai: 401 — kalit rad etilgan, bekor qilingan yoki noto'g'ri hisobga tegishli; "
+            "https://platform.openai.com/api-keys dan yangi kalit yarating, `.env` da faqat `sk-...` "
+            "(Render Dashboard env ham yangilang)."
+        )
     if render_ok and not render_sid_ok:
         log(
             "render (service): RENDER_SERVICE_ID `srv-...` ko'rinishida emas yoki bo'sh → skipped. "
             "Render Dashboard → Service → Settings → Service ID nusxa. "
             "Yoki RENDER_SERVICE_NAME ni render.yaml dagi name bilan tekshiring (avto-topish)."
         )
+    if render_ok and not render_worker_sid_ok:
+        log(
+            "render (worker): RENDER_WORKER_SERVICE_ID yo'q — Telegram background worker uchun "
+            "`python scripts/list_render_services.py` yoki `ensure_render_telegram_worker.py` dan srv-... qo‘ying."
+        )
     if fmp_ok and fmp_http == 403:
         log(
-            "fmp: 403 — rejangiz/profile endpoint bloklangan yoki kalit mos emas; "
-            "financialmodelingprep.com/dashboard va ularning yangi Stable API bo'limini ko'ring."
+            "fmp: 403 — kalit aktiv emas / legacy endpoint bloklangan / rejangiz Stable ga mos emas; "
+            "https://site.financialmodelingprep.com/developer/docs stable bo‘limi va dashboarddagi kalitni tekshiring."
+        )
+    if fmp_ok and fmp_http == 401:
+        log(
+            "fmp: 401 — kalit rad etilgan yoki bekor qilingan; FMP dashboarddan yangi API kalit "
+            "nusxalang (faqat apikey query parametri, bosh joy yoki 'smart quote' bo‘lmasin)."
+        )
+    if zoya_ok and zoya_http == 401:
+        log(
+            "zoya: 401 — API kalit rad etilgan yoki noto'g'ri format; Zoya dashboarddan kalitni "
+            "qayta nusxalang (Bearer uchun mo'ljallangan token)."
         )
 
     for label, detail in outcomes:

@@ -7,10 +7,11 @@ import os
 import sys
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, time as dt_time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -30,6 +31,7 @@ from agents.scan_pipeline import (  # noqa: E402
     telegram_default_controls,
 )
 from agents.scan_presets import SCAN_PRESETS  # noqa: E402
+from agents.session_calendar import NY_TZ, is_weekday_et, ny_session_bounds_for_date  # noqa: E402
 from agents.simple_backtest_mvp import (  # noqa: E402
     daily_closes_yfinance,
     sma_crossover_long_only_backtest,
@@ -154,6 +156,71 @@ def _escape_html(s: Any) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _parse_auto_push_at(raw: str) -> tuple[int, int] | None:
+    """`HH:MM` yoki `H:MM` — 00:00–23:59."""
+
+    s = raw.strip()
+    if not s or s.count(":") != 1:
+        return None
+    a, b = s.split(":", 1)
+    try:
+        hh = int(a.strip(), 10)
+        mm = int(b.strip(), 10)
+    except ValueError:
+        return None
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return None
+    return hh, mm
+
+
+def _next_scheduled_fire_utc(hh: int, mm: int, tz_name: str) -> datetime:
+    """Keyingi `hh:mm` lokal vaqt (NY savdo haftasi kunlarida)."""
+
+    try:
+        tz = ZoneInfo((tz_name or "Asia/Tashkent").strip() or "Asia/Tashkent")
+    except Exception:
+        tz = ZoneInfo("Asia/Tashkent")
+    now_local = datetime.now(tz)
+    for days_ahead in range(400):
+        d = now_local.date() + timedelta(days=days_ahead)
+        cand = datetime.combine(d, dt_time(hh, mm), tzinfo=tz)
+        if cand <= now_local:
+            continue
+        ny = cand.astimezone(NY_TZ)
+        if is_weekday_et(ny):
+            return cand.astimezone(UTC)
+    return datetime.now(UTC) + timedelta(hours=1)
+
+
+def _next_ny_rth_open_utc(from_ny: datetime | None = None) -> datetime:
+    """Keyingi NY oddiy sessiya 09:30 ET ochilish (UTC)."""
+
+    base = from_ny or datetime.now(NY_TZ)
+    d = base.date()
+    open_t, _ = ny_session_bounds_for_date(d)
+    if base.weekday() < 5 and base < open_t:
+        return open_t.astimezone(UTC)
+    for i in range(1, 22):
+        d2 = d + timedelta(days=i)
+        open_t2, _ = ny_session_bounds_for_date(d2)
+        if open_t2.weekday() < 5:
+            return open_t2.astimezone(UTC)
+    return open_t.astimezone(UTC)
+
+
+def _format_market_clock_footer() -> str:
+    """NY ochilish va UZ vaqti — foydalanuvchi bozor oldi tayyorlovni solishtirishi uchun."""
+
+    uz = ZoneInfo("Asia/Tashkent")
+    open_utc = _next_ny_rth_open_utc()
+    open_ny = open_utc.astimezone(NY_TZ)
+    open_uz = open_utc.astimezone(uz)
+    return (
+        f"<i>Keyingi NY RTH ochilish: <code>{_escape_html(open_ny.strftime('%Y-%m-%d %H:%M %Z'))}</code> · "
+        f"O‘zbekiston: <code>{_escape_html(open_uz.strftime('%Y-%m-%d %H:%M %Z'))}</code></i>\n"
+    )
+
+
 def _format_signal_line(row: Dict[str, Any]) -> str:
     t = _escape_html(row.get("ticker", "?"))
     score = row.get("score", 0)
@@ -162,10 +229,37 @@ def _format_signal_line(row: Dict[str, Any]) -> str:
     paper_ready = bool(row.get("paper_trade_ready"))
     status = "🟢 READY" if paper_ready else "🟡 WATCH"
     tv = _tradingview_url(t)
-    return (
+    head = (
         f"• <code>{t}</code> · {status} · score:{score} · {dec} · {strat} · "
         f"<a href=\"{tv}\">TradingView</a>"
     )
+    detail_bits: list[str] = []
+    price = row.get("price")
+    if price is not None:
+        try:
+            detail_bits.append(f"narx≈{_escape_html(round(float(price), 4))}")
+        except (TypeError, ValueError):
+            pass
+    sl = row.get("stop_suggestion")
+    if sl is not None:
+        try:
+            detail_bits.append(f"SL≈{_escape_html(round(float(sl), 4))}")
+        except (TypeError, ValueError):
+            pass
+    tp = row.get("take_profit_suggestion")
+    if tp is not None:
+        try:
+            detail_bits.append(f"TP/chiqish≈{_escape_html(round(float(tp), 4))}")
+        except (TypeError, ValueError):
+            pass
+    entry_txt = str(row.get("chatgpt_entry_condition") or "").strip()
+    if entry_txt:
+        if len(entry_txt) > 140:
+            entry_txt = entry_txt[:137] + "…"
+        detail_bits.append(f"kirish: {_escape_html(entry_txt)}")
+    if detail_bits:
+        return head + "\n   └ " + " · ".join(detail_bits)
+    return head
 
 
 def _normalize_tv_symbol(raw: str) -> str:
@@ -253,7 +347,7 @@ def _execute_scan_send_persist(
 
     ctrls = telegram_default_controls()
     if run_all:
-        max_all = _env_int_bounded("TELEGRAM_MAX_SYMBOLS_ALL", 1200, 200, 5000)
+        max_all = _env_int_bounded("TELEGRAM_MAX_SYMBOLS_ALL", 1200, 200, 15000)
         ctrls = SidebarControls(
             desk_label=f"{ctrls.desk_label} all-us",
             max_symbols=max_all,
@@ -297,6 +391,8 @@ def _execute_scan_send_persist(
 
     _persist_last_scan(ranked=ranked, summary=summary, universe_size=len(tickers))
 
+    top_n = _telegram_reply_top_n()
+    shown = min(top_n, len(ranked)) if ranked else 0
     lines = [
         "<b>Skan yakunlandi</b>\n",
         f"Desk: {_escape_html(summary.get('desk_label'))} · ",
@@ -304,9 +400,12 @@ def _execute_scan_send_persist(
         f"Tickers: {summary.get('tickers_scanned')} · ",
         f"eligible (strategy+AI): {summary.get('eligible_signals')} · ",
         f"paper-ready: {summary.get('paper_ready_signals', '—')}\n",
+        f"<i>Universe ro‘yxat: <code>{len(tickers)}</code> ta ticker · "
+        f"Top: <code>{shown}</code> ta ko‘rsatiladi (max <code>{top_n}</code>, "
+        f"<code>TELEGRAM_BOT_REPLY_TOP_N</code>) — kengroq qamrov uchun <code>/scanall</code>.</i>\n",
+        _format_market_clock_footer(),
         "<b>Top</b>\n",
     ]
-    top_n = _telegram_reply_top_n()
     for r in ranked[:top_n]:
         lines.append(_format_signal_line(r) + "\n")
     top_failed = summary.get("top_failed_rules") or []
@@ -326,31 +425,63 @@ def _execute_scan_send_persist(
 
 
 def _auto_push_loop(token: str, chat_id: str, scan_lock: threading.Lock) -> None:
-    """Kunlik/interval: bir xil skan natijasini chatga yuborish (Babir uslubi)."""
+    """Kunlik: interval yoki lokal soat bo‘yicha (UZ vaqti bilan NY savdo kunlari)."""
 
     interval_min = _env_int_bounded("TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES", 1440, 15, 10080)
     use_scanall = _truthy_env("TELEGRAM_AUTO_PUSH_USE_SCANALL", default=False)
     first_delay_sec = max(30, _env_int_bounded("TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC", 120, 30, 3600))
-    print(
-        f"telegram_command_bot: auto-push yoqilgan — har {interval_min} daqiqada, "
-        f"scanall={'ha' if use_scanall else 'yoq'} → chat {chat_id} (birinchi push ~{first_delay_sec}s)",
-        flush=True,
-    )
+    at_raw = os.getenv("TELEGRAM_AUTO_PUSH_AT", "").strip()
+    parsed_at = _parse_auto_push_at(at_raw) if at_raw else None
+    tz_name = os.getenv("TELEGRAM_AUTO_PUSH_TZ", "Asia/Tashkent").strip() or "Asia/Tashkent"
+
+    if parsed_at:
+        hh, mm = parsed_at
+        print(
+            f"telegram_command_bot: auto-push — jadval rejimi {hh:02d}:{mm:02d} ({tz_name}), "
+            f"NY hafta ichida · scanall={'ha' if use_scanall else 'yoq'} → chat {chat_id} "
+            f"(birinchi sinxron ~{first_delay_sec}s)",
+            flush=True,
+        )
+    else:
+        print(
+            f"telegram_command_bot: auto-push yoqilgan — har {interval_min} daqiqada, "
+            f"scanall={'ha' if use_scanall else 'yoq'} → chat {chat_id} (birinchi push ~{first_delay_sec}s)",
+            flush=True,
+        )
     time.sleep(float(first_delay_sec))
     while True:
         if not _truthy_env("TELEGRAM_AUTO_PUSH_ENABLED", default=False):
             time.sleep(300)
             continue
+
+        if parsed_at:
+            hh, mm = parsed_at
+            next_utc = _next_scheduled_fire_utc(hh, mm, tz_name)
+            sleep_sec = max(15.0, (next_utc - datetime.now(UTC)).total_seconds())
+            print(
+                f"telegram_command_bot: auto-push jadval — keyingi {next_utc.strftime('%Y-%m-%d %H:%M UTC')} "
+                f"(~{int(sleep_sec)}s)",
+                flush=True,
+            )
+            time.sleep(sleep_sec)
+
         if not scan_lock.acquire(blocking=False):
             print("telegram_command_bot: auto-push — skan band, keyingi safarga qoldirildi", flush=True)
             time.sleep(60)
             continue
         try:
+            if parsed_at:
+                head = (
+                    "<b>Kunlik tayyorlov</b> <i>(NY savdo kuni — "
+                    f"{_escape_html(tz_name)} {_escape_html(f'{parsed_at[0]:02d}:{parsed_at[1]:02d}')})</i>"
+                )
+            else:
+                head = "<b>Avtomatik market skani</b> <i>(Babir uslubi)</i>"
             _execute_scan_send_persist(
                 token,
                 chat_id,
                 run_all=use_scanall,
-                heading_html="<b>Avtomatik market skani</b> <i>(Babir uslubi)</i>",
+                heading_html=head,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"telegram_command_bot: auto-push xato: {exc}", flush=True)
@@ -364,6 +495,9 @@ def _auto_push_loop(token: str, chat_id: str, scan_lock: threading.Lock) -> None
                 pass
         finally:
             scan_lock.release()
+
+        if parsed_at:
+            continue
         time.sleep(interval_min * 60)
 
 
@@ -373,7 +507,9 @@ _help_text = """<b>Mavjud buyruqlar</b>
 /scanall — kattaroq qamrov (TELEGRAM_MAX_SYMBOLS_ALL dan oladi)
 /signals — oxirgi /scan ning qisqa natijasi (agar saqlangan bo‘lsa; worker restart/deploydan keyin yo‘qolishi mumkin)
 <i>Avtomatik push:</i> <code>TELEGRAM_AUTO_PUSH_ENABLED=true</code> + <code>TELEGRAM_CHAT_ID</code> — har
-<code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES</code> daqiqada (default 1440 ≈ kuniga 1 marta) top ~6 ticker yuboriladi.
+<code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES</code> daqiqada (default 1440 ≈ kuniga 1 marta) yoki
+<code>TELEGRAM_AUTO_PUSH_AT=18:30</code> + <code>TELEGRAM_AUTO_PUSH_TZ=Asia/Tashkent</code> bilan NY hafta ichida
+shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
 /status — bot/worker holati va env diagnostika
 /risk — paper risk limitlari (tez ko‘rish)
@@ -398,6 +534,8 @@ def _status_html() -> str:
     ap_en = os.getenv("TELEGRAM_AUTO_PUSH_ENABLED", "false").strip().lower()
     ap_iv = os.getenv("TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES", "1440").strip()
     ap_sa = os.getenv("TELEGRAM_AUTO_PUSH_USE_SCANALL", "false").strip().lower()
+    ap_at = os.getenv("TELEGRAM_AUTO_PUSH_AT", "").strip()
+    ap_tz = os.getenv("TELEGRAM_AUTO_PUSH_TZ", "Asia/Tashkent").strip()
     return (
         "<b>Bot status</b>\n"
         f"TRADING_MODE: <code>{_escape_html(trading_mode)}</code>\n"
@@ -405,7 +543,9 @@ def _status_html() -> str:
         f"Paper config: <b>{'OK' if paper_ok else 'CHECK'}</b>\n"
         f"Alpaca keys: <b>{'OK' if key_ok else 'MISSING'}</b>\n"
         f"Telegram token: <b>{'OK' if tg_key_ok else 'MISSING'}</b>\n"
-        f"TELEGRAM_AUTO_PUSH_ENABLED: <code>{_escape_html(ap_en)}</code> · interval_min: <code>{_escape_html(ap_iv)}</code> · scanall: <code>{_escape_html(ap_sa)}</code>\n"
+        f"TELEGRAM_AUTO_PUSH_ENABLED: <code>{_escape_html(ap_en)}</code> · interval_min: <code>{_escape_html(ap_iv)}</code> · "
+        f"scanall: <code>{_escape_html(ap_sa)}</code>\n"
+        f"TELEGRAM_AUTO_PUSH_AT: <code>{_escape_html(ap_at or '—')}</code> · TZ: <code>{_escape_html(ap_tz)}</code>\n"
         f"MAX_POSITION_SIZE_USD: <code>{_escape_html(max_pos)}</code>\n"
         f"MAX_RISK_PCT_OF_EQUITY: <code>{_escape_html(max_risk)}</code>\n"
         f"MIN_RISK_REWARD_RATIO: <code>{_escape_html(min_rr)}</code>\n"
