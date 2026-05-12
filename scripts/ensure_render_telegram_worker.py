@@ -78,6 +78,13 @@ _WORKER_ENV_KEYS: tuple[str, ...] = (
     "TELEGRAM_ALERTS_ENABLED",
     "TELEGRAM_BOT_REPLY_TOP_N",
     "TELEGRAM_BOT_TOP_ROWS",
+    "TELEGRAM_AUTO_PUSH_ENABLED",
+    "TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES",
+    "TELEGRAM_AUTO_PUSH_CHAT_ID",
+    "TELEGRAM_AUTO_PUSH_USE_SCANALL",
+    "TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC",
+    "SCAN_EMPTY_WATCHLIST_TOP_N",
+    "SCAN_SHOW_WATCHLIST_ON_EMPTY",
     "TELEGRAM_SCAN_PRESET",
     "TELEGRAM_FORCE_EXPLORER",
     "TELEGRAM_MAX_SYMBOLS",
@@ -249,6 +256,10 @@ def _build_add_env() -> list[dict[str, str]]:
         "FETCH_UNIVERSE_FINVIZ_FIRST": "false",
         "TELEGRAM_USE_FINVIZ_CSV": "false",
         "SCAN_RELAX_ON_EMPTY": "true",
+        "TELEGRAM_BOT_REPLY_TOP_N": "6",
+        "TELEGRAM_BOT_TOP_ROWS": "6",
+        "TELEGRAM_ALERT_TOP_N": "6",
+        "SCAN_EMPTY_WATCHLIST_TOP_N": "6",
     }
     rows_by_key: dict[str, dict[str, str]] = {r["key"]: r for r in rows}
     for k, v in forced_defaults.items():

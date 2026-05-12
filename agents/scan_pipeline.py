@@ -425,7 +425,7 @@ def run_scan_market(
             ),
             reverse=True,
         )
-        top_watch = _env_int_bounded("SCAN_EMPTY_WATCHLIST_TOP_N", 12, 3, 30)
+        top_watch = _env_int_bounded("SCAN_EMPTY_WATCHLIST_TOP_N", 6, 3, 30)
         ranked_signals = []
         for item in candidate_pool[:top_watch]:
             cloned = dict(item)

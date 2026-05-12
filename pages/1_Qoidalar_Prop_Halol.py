@@ -80,7 +80,7 @@ def _truthy_env(name: str, *, default: bool = True) -> bool:
     return str(v).strip().lower() in {"1", "true", "yes", "on"}
 
 
-st.set_page_config(page_title="Qoidalar — Prop & Halol", layout="wide", initial_sidebar_state="auto")
+st.set_page_config(page_title="Qoidalar — Prop va halol", layout="wide", initial_sidebar_state="auto")
 _inject_prop_page_styles()
 
 st.title("Prop firma va halol skrin")
@@ -90,15 +90,21 @@ st.caption(
 )
 
 hero1, hero2, hero3, hero4 = st.columns(4)
-hero1.metric("AI provider", _env("AI_PROVIDER", "auto"))
-hero2.metric("Zoya", "ON" if _truthy_env("ZOYA_ENABLED", default=True) else "OFF")
-hero3.metric("Telegram", "READY" if _has_key("TELEGRAM_BOT_TOKEN") and _has_key("TELEGRAM_CHAT_ID") else "SETUP")
-hero4.metric("Render", "READY" if _has_key("RENDER_API_KEY") and (_has_key("RENDER_SERVICE_ID") or _has_key("RENDER_SERVICE_NAME")) else "SETUP")
+hero1.metric("AI provayder", _env("AI_PROVIDER", "auto"))
+hero2.metric("Zoya", "Yoqilgan" if _truthy_env("ZOYA_ENABLED", default=True) else "O‘chiq")
+hero3.metric(
+    "Telegram",
+    "Tayyor" if _has_key("TELEGRAM_BOT_TOKEN") and _has_key("TELEGRAM_CHAT_ID") else "Sozlash kerak",
+)
+hero4.metric(
+    "Render",
+    "Tayyor" if _has_key("RENDER_API_KEY") and (_has_key("RENDER_SERVICE_ID") or _has_key("RENDER_SERVICE_NAME")) else "Sozlash kerak",
+)
 
 t_prop, t_plan, t_ss21, t_flow, t_dis = st.tabs(
     [
         "Prop rejasi (.env)",
-        "AI & tarmoq rejasi",
+        "SI va tarmoq rejasi",
         "AAOIFI SS21",
         "Bot ketma-ketligi",
         "Manbalar",
@@ -117,17 +123,17 @@ with t_prop:
     with c1:
         st.metric("Firma", _env("PROP_FIRM_NAME", "— (namuna: Toro250)"))
         st.metric("Reja narxi (USD/oy)", _env("PROP_PLAN_ADVANCED_USD", "— (299)"))
-        st.metric("Buying power (USD)", _env("PROP_BUYING_POWER_USD", "— (250,000)"))
+        st.metric("Savdo kapitali (USD)", _env("PROP_BUYING_POWER_USD", "— (250,000)"))
     with c2:
-        st.metric("Profit target (USD)", _env("PROP_PROFIT_TARGET_USD", "— (15,000)"))
-        st.metric("Profit target (%)", _env("PROP_PROFIT_TARGET_PCT", "— (6)"))
-        st.metric("Kunlik max loss (USD)", _env("PROP_DAILY_MAX_LOSS_USD", "— (1,250)"))
+        st.metric("Foyda nishoni (USD)", _env("PROP_PROFIT_TARGET_USD", "— (15,000)"))
+        st.metric("Foyda nishoni (%)", _env("PROP_PROFIT_TARGET_PCT", "— (6)"))
+        st.metric("Kunlik maks. zarar (USD)", _env("PROP_DAILY_MAX_LOSS_USD", "— (1,250)"))
     with c3:
-        st.metric("Max drawdown (USD)", _env("PROP_MAX_DRAWDOWN_USD", "— (7,500)"))
-        st.metric("Max drawdown (%)", _env("PROP_MAX_DRAWDOWN_PCT", "— (3)"))
-        st.metric("Consistency min (%)", _env("PROP_CONSISTENCY_MIN_PCT", "— (50)"))
+        st.metric("Maks drawdown (USD)", _env("PROP_MAX_DRAWDOWN_USD", "— (7,500)"))
+        st.metric("Maks drawdown (%)", _env("PROP_MAX_DRAWDOWN_PCT", "— (3)"))
+        st.metric("Izchillik minimumi (%)", _env("PROP_CONSISTENCY_MIN_PCT", "— (50)"))
 
-    st.metric("Min round trades", _env("PROP_MIN_ROUND_TRADES", "— (200)"))
+    st.metric("Minimal aylanma bitimlar", _env("PROP_MIN_ROUND_TRADES", "— (200)"))
 
     st.divider()
 
@@ -137,17 +143,17 @@ with t_prop:
             st.markdown(
                 """
 - Reja narxi: **$299 / oy**
-- Buying power: **$250,000**
-- Profit target: **$15,000** (~6%)
-- Daily max loss: **$1,250**
+- Savdo kapitali: **$250,000**
+- Foyda nishoni: **$15,000** (~6%)
+- Kunlik maks. zarar: **$1,250**
 """
             )
         with note2:
             st.markdown(
                 """
-- Max drawdown: **$7,500** (~3%)
-- Consistency: **50%**
-- Min round trades: **200**
+- Maks drawdown: **$7,500** (~3%)
+- Izchillik: **50%**
+- Minimal bitimlar: **200**
 - Tekshiruv: `python scripts/check_apis.py`
 """
             )
@@ -155,9 +161,9 @@ with t_prop:
             "Prop limitlari hali to‘liq avtopolitsiya qilinmaydi; asosiy `PROP_*` qiymatlar `.env.example` oxirida izoh bilan bor."
         )
 
-# --- Tab: AI & network plan ---
+# --- Tab: SI va tarmoq rejasi ---
 with t_plan:
-    st.subheader("AI provayder va ixtiyoriy xizmatlar")
+    st.subheader("Sun’iy intellekt provayderlari va ixtiyoriy xizmatlar")
     st.caption("Kalit matnlari ko‘rsatilmaydi — faqat **sozlangan / yo‘q** va rejim.")
 
     ap = _env("AI_PROVIDER", "auto")
@@ -165,10 +171,10 @@ with t_plan:
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.markdown("**LLM**")
+        st.markdown("**Til modeli (LLM)**")
         st.write("- OpenAI: " + ("kalit sozlangan" if _has_key("OPENAI_API_KEY") else "yo‘q / bo‘sh"))
         st.write("- DeepSeek: " + ("kalit sozlangan" if _has_key("DEEPSEEK_API_KEY") else "yo‘q / bo‘sh"))
-        st.caption(f"Model: `{_env('DEEPSEEK_MODEL', 'deepseek-chat')}` · base: `{_env('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')}`")
+        st.caption(f"model: `{_env('DEEPSEEK_MODEL', 'deepseek-chat')}` · manzil: `{_env('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')}`")
     with col_b:
         st.markdown("**Ma’lumot & broker**")
         st.write("- Polygon: " + ("✓" if _has_key("POLYGON_API_KEY") else "—"))
@@ -177,19 +183,19 @@ with t_plan:
 
     st.markdown("**Halol / Zoya**")
     ze = _truthy_env("ZOYA_ENABLED", default=True)
-    st.write(f"- ZOYA_ENABLED: **{ze}**")
+    st.write(f"- Zoya yoqilgan: **{'ha' if ze else 'yo‘q'}**")
     st.write("- Zoya kaliti: " + ("sozlangan" if _has_key("ZOYA_API_KEY") else "yo‘q"))
     st.caption("401 bo‘lsa yoki Zoya kerak bo‘lmasa: `ZOYA_ENABLED=false` va kalitni bo‘sh qoldiring — `check_apis` yashil.")
 
     st.markdown("**Boshqa**")
     st.write("- FMP / NewsAPI / GitHub / Supabase: faqat `.env` da yo‘q bo‘lsa ishlatilmaydi.")
     st.divider()
-    st.markdown("**Lokal -> Render oqimi**")
+    st.markdown("**Mahalliy → Render chiqarish**")
     st.code(
         """1. streamlit run dashboard.py
 2. python scripts/check_apis.py
 3. .\\scripts\\verify_local.ps1
-4. Render dashboard/deploy hook orqali publish""",
+4. Render: dashboard yoki deploy hook orqali nashr""",
         language="text",
     )
 
@@ -214,62 +220,66 @@ with t_ss21:
 """
     )
 
-    with st.expander("A) Biznes faoliyati — odatda rad", expanded=False):
+    with st.expander("(A) Biznes faoliyati — odatda rad", expanded=False):
         st.markdown(
             """
 - Riba/oddiy bank, oddiy sug‘urta (conventional), alkogol, qimor, cho‘chqa/asosan nojoiz oziq-ona, tamas, kattalik kontent,
   asosiy biznes bo‘yicha tamaki, qurol (metodologiyaga qarab) va hokazo.
 
-Zoya yoki qo‘lda industry filtr — **NON_COMPLIANT** bo‘lsa gate rad qiladi.
+Zoya yoki qo‘lda soha filtri — **`NON_COMPLIANT`** boʻlsa darvoza rad qiladi.
 """
         )
 
-    with st.expander("B) Moliyaviy nisbatlar (SS21 uslubida ko‘p ishlatiladi)", expanded=True):
+    with st.expander("(B) Moliyaviy nisbatlar (SS21 uslubida ko‘p qo‘llanadi)", expanded=True):
         st.markdown("Foizlar **0.30 = 30%** ko‘rinishida `ratios` ga uzating (masalan `0.18` = 18%).")
         st.code(
-            """Debt ratio = Interest-bearing debt / Market cap  →  ≤ HALAL_MAX_DEBT_RATIO
-Cash ratio  = (Cash + interest-bearing securities) / Market cap  →  ≤ HALAL_MAX_CASH_RATIO
-Impure rev. = Non-halal revenue / Total revenue  →  ≤ HALAL_MAX_IMPURE_REV""",
+            """Qarz nisbati = Foiz toʻlovli qarzlar / Bozor qiymati  →  ≤ HALAL_MAX_DEBT_RATIO
+Naqd nisbati  = (Naqd + foiz taʼsirli qimmatli qog‘ozlar) / Bozor qiymati  →  ≤ HALAL_MAX_CASH_RATIO
+Nojoʻy daromad ulushi = Halol boʻlmas daromad / Jami daromad  →  ≤ HALAL_MAX_IMPURE_REV""",
             language="text",
         )
 
-    with st.expander("C) Purification (dividenddan)", expanded=False):
+    with st.expander("(C) Poklantirish (dividendlardan)", expanded=False):
         st.markdown(
             """
-Agar **mixed** bo‘lsa, odatda nojoiz ulush foiziga proporsional **sadaqa** hisoblanadi (portfolio va divident ma’lumotlari kerak).
-Bot hozircha bu pulni avtomatik **ajratmaydi** — faqat gate holati.
+Agar **aralash (mixed)** boʻlgan boʻlsa, odatda nojoʻy ulush foiziga proporsional **sadaqa** hisoblanadi (portfel va dividend maʼlumotlari kerak).
+Bot hozircha bu pulni avtomatik **ajratmaydi** — faqat darvoza holati chiqariladi.
 """
         )
 
-    with st.expander("D) Holatlar (nomlash)", expanded=False):
+    with st.expander("(D) Holat nomlari", expanded=False):
         st.markdown(
             """
-- **PURE HALAL** — nojoiz daromad praktik 0 va cheklovlar ok.
-- **HALAL-COMPLIANT / MIXED** — cheklovlar ichida, lekin purification kerak bo‘lishi mumkin.
-- **SHUBHALI** — qo‘lda qaror.
-- **NOT HALAL** — savdoga yo‘l qo‘ymang (`HALAL_PASS = False`).
+- **SOF HALOL** — nojoʻiz daromad amaliyotda 0 va chegaralar toʻgʻri.
+- **HALOL MOS / ARALASH** — koʻrsatkichlar ichida, ammo poklantirish talab qilinishi mumkin.
+- **SHUBHALI** — qoʻlda qaror.
+- **HALOL EMAS** — savdoni taʼqiqlash (`HALAL_PASS = False`).
 
-**Savda ruxsati:** `HALAL_PASS` True bo‘lsa, keyin RVOL / VWAP / risk manager.
+**Savdoga ruxsat:** `HALAL_PASS` true boʻlsa — keyingi bosqich: RVOL / VWAP / risk menejer.
 """
         )
 
 with t_flow:
     flow1, flow2 = st.columns(2)
     with flow1:
-        st.info("Bu oqim signalni filtrlash uchun: halal -> texnik -> AI -> risk -> paper.")
+        st.info(
+            "Bu ketma‑ketlik: halol tekshirish → texnik koʻrsatkichlar → SI tahlili → risk → qog‘oz savdo (`paper`)."
+        )
     with flow2:
-        st.info("Agar `Paper ready = No` bo‘lsa, Paper savdo bo‘limida blok sababini ko‘rasiz.")
+        st.info(
+            "Agar **qog‘oz savdoga tayyor = yoʻq** boʻlsa, `Paper` boʻlakida blok sababi chiqadi (`Paper ready = No`)."
+        )
     st.markdown(
         """
 ```
-1. Halal screening (Zoya + ratios)
+1. Halol skrinning (Zoya + nisbatlar)
 2. Fundamental / yangiliklar (ixtiyoriy)
 3. Texnik signal (RSI, EMA, VWAP, hajm)
-4. Risk: % hisob, SL majburiy, kunlik/trade limit
-5. Paper yoki (keyinroq) live — prop limitlariga mos nazorat
+4. Risk: % hisob-kitob, SL majburiy, kunlik/bitim limiti
+5. Qog‘oz savdo yoki keyin „jonli“ rejim — prop chegaralari bilan nazorat
 ```
 
-**Qoida:** Agar **halal gate** rad qilsa — **BUY ishga tushmaydi** (agar strategiya halol bilan integratsiya qilingan bo‘lsa).
+**Qoida:** halol boʻlmagan boʻlsa (**halol darvozi** oʻtkazmaydi) ko‘pchilik BUY strategiyalari ishlamaydi.
 """
     )
 
