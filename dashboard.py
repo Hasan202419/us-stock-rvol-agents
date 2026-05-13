@@ -21,6 +21,7 @@ from agents.bootstrap_env import ensure_env_file, load_project_env
 from agents.scan_pipeline import SidebarControls, build_scan_agents, run_scan_market
 from agents.scan_presets import SCAN_PRESETS
 from agents.strategy_factory import resolve_strategy_mode
+from agents.trade_plan_format import deterministic_trade_plan_from_signal
 from agents.universe_agent import UniverseAgent
 
 
@@ -823,6 +824,16 @@ def render_paper_trading_panel(signals: List[Dict[str, Any]]) -> None:
     if hard_flags:
         st.caption(f"Hard AI flags: {', '.join(hard_flags)}")
     st.caption(selected_signal.get("chatgpt_reason") or "AI izohi yo‘q.")
+
+    plan_md = (selected_signal.get("analyst_trade_plan_text") or "").strip()
+    if not plan_md:
+        plan_md = deterministic_trade_plan_from_signal(
+            selected_signal,
+            lang=os.getenv("ANALYST_TRADE_PLAN_LANG", "en"),
+        )
+    if plan_md.strip():
+        with st.expander("Professional trade plan (analyst framework)", expanded=False):
+            st.markdown(plan_md)
 
     st.write(f"RiskManager status: {'Approved' if approved else 'Blocked'} - {reason}")
     with st.expander("Nega order ketmayapti? (tez diagnostika)", expanded=not approved):

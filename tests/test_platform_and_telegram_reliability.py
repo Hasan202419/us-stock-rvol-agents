@@ -67,6 +67,8 @@ def test_run_scan_market_adds_paper_trade_fields(monkeypatch, tmp_path: Path) ->
                 "entry_condition": "Break high",
                 "paper_ready_blocked": None,
                 "paper_ready_explicit": True,
+                "trade_plan": {},
+                "analyst_trade_plan_text": "",
             }
 
     class DummyLogger:
@@ -153,6 +155,8 @@ def test_scan_ai_include_fails_calls_llm_on_strategy_fail(monkeypatch, tmp_path:
                 "entry_condition": "",
                 "paper_ready_blocked": None,
                 "paper_ready_explicit": False,
+                "trade_plan": {},
+                "analyst_trade_plan_text": "",
             }
 
     class DummyLogger:

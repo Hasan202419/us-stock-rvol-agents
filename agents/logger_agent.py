@@ -31,6 +31,7 @@ class LoggerAgent:
                 "chatgpt_risk_flags": signal.get("chatgpt_risk_flags_json"),
                 "chatgpt_risk_flags_hard": signal.get("chatgpt_risk_flags_hard_json"),
                 "chatgpt_entry_condition": signal.get("chatgpt_entry_condition"),
+                "analyst_trade_plan_excerpt": (str(signal.get("analyst_trade_plan_text") or "")[:500]),
                 "strategy_name": signal.get("strategy_name"),
                 "indicator_lineage_json": signal.get("indicator_lineage_json"),
                 "daily_bar_timestamp_ms": signal.get("daily_bar_timestamp_ms"),

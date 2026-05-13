@@ -154,10 +154,19 @@ MARKET_DATA_PROVIDER_PRIORITY=polygon,yahoo,alpaca,finnhub,alpha_vantage
 ## Telegram chart va keng skan
 
 - `/tv AAPL` yoki `/tv NASDAQ:NVDA` — TradingView chart link yuboradi.
-- `/scan` — oddiy skan (`TELEGRAM_MAX_SYMBOLS`, `.env` da 10–15000 gacha).
-- `/scanall` — keng qamrov (`TELEGRAM_MAX_SYMBOLS_ALL`, `.env` da 200–15000 gacha; `render.yaml` / `ensure_render` sukutlari 15000 gacha).
+- `/scan` — oddiy skan (`TELEGRAM_MAX_SYMBOLS`; **0 = cheklovsiz**, API dagi barcha US tradable).
+- `/scanall` — keng qamrov (`TELEGRAM_MAX_SYMBOLS_ALL`; **0 = cheklovsiz**).
+- `/plan` yoki `/plan AAPL` — oxirgi skandan professional trade plan matni.
 - `/status` — worker/env tez diagnostika (paper config, keylar, risk limitlar).
 - `/risk` — risk limitlarni alohida ko‘rsatadi.
-- **Deyarli barcha AQSH aksiyalari**: `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` yoki `POLYGON_API_KEY` bo‘lishi kerak (bo‘lmasa — qisqa fallback ro‘yxat). `.env` da masalan `TELEGRAM_MAX_SYMBOLS_ALL=12000`, keyin Telegramda `/scanall`. Skan vaqti va API limitlari ticker soniga qarab keskin oshadi; `SCAN_MAX_WORKERS` ni ehtiyotkorlik bilan oshiring.
+- **Deyarli barcha AQSH aksiyalari**: `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` yoki `POLYGON_API_KEY` bo‘lishi kerak (bo‘lmasa — qisqa fallback ro‘yxat). `.env` da `TELEGRAM_MAX_SYMBOLS=0` yoki `TELEGRAM_MAX_SYMBOLS_ALL=0` — API qaytargan barcha US tradable; keyin Telegramda `/scanall` (avto-pushda ham). Skan vaqti va API limitlari ticker soniga qarab keskin oshadi; `SCAN_MAX_WORKERS` ni ehtiyotkorlik bilan oshiring.
 - **Kunlik tayyorlov (O‘zbekiston vaqti)**: `.env` da `TELEGRAM_AUTO_PUSH_AT=18:30` va `TELEGRAM_AUTO_PUSH_TZ=Asia/Tashkent` (default TZ) — avtomatik push faqat **NY hafta ichidagi** kunlarda shu soatda ishlaydi (shanba/yakshanba ET da o‘tkazib yuboriladi). NY bayram kunlari hozircha hisobga olinmaydi. Soatni NY ochilishidan oldin qoldirish uchun taxminan **18:00–19:00** oralig‘ida sinab ko‘ring (DST bilan bir necha daqiqa siljishi mumkin).
-- Eslatma: ro‘yxat `limit` dan katta bo‘lsa Alpaca/Polygon natijasida **alfavit bo‘yicha kesiladi** (tasodifiy emas); shuning uchun “hammasi” uchun `TELEGRAM_MAX_SYMBOLS_ALL` ni ro‘yxat uzunligidan **kattaroq** qo‘ying (masalan 12000–15000).
+
+## Analyst trade plan + Volume Ignition
+
+- **`STRATEGY_MODE=volume_ignition`** — kunlik shamlar bo‘yicha “volume ignition” filtri: oxirgi 3 kun hajm o‘sishi, hajm ≥ 2× 20 kunlik o‘rtacha, RVOL, 3 kunlik o‘sish cheklovi, qarshilik yaqinligi, yuqori dip, EMA9/20 konteksti, ATR o‘sishi, parabolik taqiq, minimal o‘rtacha hajm. Barcha chegaralar `.env` da `IGNITION_*` prefiksi bilan ([agents/strategy_volume_ignition.py](agents/strategy_volume_ignition.py)).
+- **LLM professional plan**: `ANALYST_TRADE_PLAN_ENABLED=true` (sukut) — ChatGPT/DeepSeek JSON ichida `trade_plan` obyekti (company, catalyst, TA, risk, entry/stop/target, R:R, execution, summary). Matn dashboard va `analyst_trade_plan_text` maydonida; LLM o‘chiq bo‘lsa deterministik reja [agents/trade_plan_format.py](agents/trade_plan_format.py) dan to‘ldiriladi.
+- **Telegram**: `/plan` yoki `/plan AAPL` — oxirgi `/scan` natijasidan (`state/last_telegram_scan.json`) bitta ticker bo‘yicha to‘liq plan matni.
+- **Paper savdo**: [agents/risk_manager_agent.py](agents/risk_manager_agent.py) `allow_order`, qaror, SL/TP va R:R tekshiruvi — plan tavsiya; buyruq avtomatik emas.
+
+- Eslatma: aniq **son** limit qo‘yganingizda ro‘yxat API dan katta bo‘lsa, ba’zi yo‘llarda **alfavit bo‘yicha kesiladi**. **0** (cheklovsiz) rejimda Alpaca bitta javobda beradi; Polygon esa sahifalab to‘liq yig‘adi (Polygon tomonda max ~5000 sahifa xavfsizlik cheklovi).

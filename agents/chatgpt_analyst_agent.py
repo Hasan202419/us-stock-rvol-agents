@@ -8,6 +8,8 @@ from typing import Any, Dict, List
 import requests
 from openai import OpenAI
 
+from agents.trade_plan_format import analyst_trade_plan_for_signal, parse_trade_plan_dict
+
 
 def _retryable_openai(exc: BaseException) -> bool:
     """429/5xx va ulanish xatolarida qayta urinish (OpenAI SDK turli versiyalar uchun)."""
@@ -67,9 +69,15 @@ class ChatGPTAnalystAgent:
 
     def analyze(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         if not self.client:
-            return self._fallback("LLM kalitlari yo'q (DeepSeek yoki OpenAI); tahlil o'tkazildi.")
+            return self._with_trade_plan_text(signal, self._fallback("LLM kalitlari yo'q (DeepSeek yoki OpenAI); tahlil o'tkazildi."))
 
         news = self._fetch_news(signal["ticker"])
+        trade_plan_on = os.getenv("ANALYST_TRADE_PLAN_ENABLED", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         prompt = {
             "signal": {
                 "ticker": signal.get("ticker"),
@@ -95,6 +103,7 @@ class ChatGPTAnalystAgent:
                 "ignition_distance_to_resistance_pct": signal.get("ignition_distance_to_resistance_pct"),
                 "ignition_continuation_probability": signal.get("ignition_continuation_probability"),
                 "ignition_risk_level": signal.get("ignition_risk_level"),
+                "ignition_professional_outline": signal.get("ignition_professional_outline"),
             },
             "recent_news": news,
             "schema_v2": {
@@ -105,15 +114,40 @@ class ChatGPTAnalystAgent:
                 "allow_order": "bool advisory",
                 "risk_flags": "list[str] soft warnings",
                 "risk_flags_hard": "list[str] deterministic veto helpers",
-                "entry_condition": "text",
+                "entry_condition": "text — must align with trade_plan.entry_price idea when bullish",
                 "paper_ready_blocked": "null|string",
             },
         }
+        if trade_plan_on:
+            prompt["schema_v2"]["trade_plan"] = {
+                "company": "string (or unknown)",
+                "reason_catalyst": "string — edge / catalyst / unusual volume",
+                "fundamental_analysis": "string — brief; say insufficient data if unknown",
+                "technical_analysis": "string — trend, S/R, volume, price action",
+                "prediction": "string — bullish bias, move size estimate, probability language cautious",
+                "risk_analysis": "string — support, downside, volatility, R:R narrative",
+                "entry_price": "string e.g. near 123.45 or zone",
+                "stop_loss": "string — numeric level",
+                "target_price": "string — numeric level",
+                "risk_reward_ratio": "string e.g. ~2.5:1",
+                "position_size_example": "string — illustrative only, not a mandate",
+                "execution_plan": "string — confirmation, stops, management",
+                "final_trade_summary": "string — one paragraph",
+            }
 
         max_retries = max(1, int(os.getenv("OPENAI_ANALYSIS_MAX_RETRIES", "4")))
         base_sec = float(os.getenv("OPENAI_ANALYSIS_RETRY_BASE_SEC", "1.25"))
 
         last_api_error: BaseException | None = None
+        trade_plan_block = ""
+        if trade_plan_on:
+            trade_plan_block = (
+                " Also include key trade_plan (object) with fields: company, reason_catalyst, "
+                "fundamental_analysis, technical_analysis, prediction, risk_analysis, entry_price, stop_loss, "
+                "target_price, risk_reward_ratio, position_size_example, execution_plan, final_trade_summary. "
+                "Use professional English. Numbers should be consistent with signal.stop_suggestion / "
+                "take_profit_suggestion when present. Never claim executed trades."
+            )
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
@@ -126,12 +160,15 @@ class ChatGPTAnalystAgent:
                                 "You are a cautious stock-scanning analyst (schema v2). "
                                 "Never claim executions. JSON keys: "
                                 "decision,confidence,reason,risk_level,allow_order,"
-                                "risk_flags,risk_flags_hard,entry_condition,paper_ready_blocked. "
+                                "risk_flags,risk_flags_hard,entry_condition,paper_ready_blocked"
+                                + (",trade_plan" if trade_plan_on else "")
+                                + ". "
                                 "decision is WATCH, STRONG_WATCH, or AVOID. "
                                 "If reckless, populate risk_flags_hard with short uppercase codes. "
                                 "Always include allow_order explicitly. "
                                 "Set allow_order=true only when the setup is WATCH/STRONG_WATCH, has no hard blockers, "
                                 "and is acceptable for paper-trade consideration."
+                                + trade_plan_block
                             ),
                         },
                         {"role": "user", "content": json.dumps(prompt, default=str)},
@@ -150,13 +187,33 @@ class ChatGPTAnalystAgent:
             try:
                 data = json.loads(raw_content)
             except json.JSONDecodeError as exc:
-                return self._fallback(f"{self._llm_label} returned invalid JSON: {exc}")
+                return self._with_trade_plan_text(signal, self._fallback(f"{self._llm_label} returned invalid JSON: {exc}"))
 
-            return self._normalize_response(data)
+            normalized = self._normalize_response(data)
+            return self._with_trade_plan_text(signal, normalized, trade_plan_enabled=trade_plan_on)
 
         if last_api_error is not None:
-            return self._fallback(f"{self._llm_label} analysis failed: {last_api_error}")
-        return self._fallback(f"{self._llm_label} analysis failed (no response).")
+            return self._with_trade_plan_text(signal, self._fallback(f"{self._llm_label} analysis failed: {last_api_error}"))
+        return self._with_trade_plan_text(signal, self._fallback(f"{self._llm_label} analysis failed (no response)."))
+
+    def _with_trade_plan_text(
+        self,
+        signal: Dict[str, Any],
+        view: Dict[str, Any],
+        *,
+        trade_plan_enabled: bool | None = None,
+    ) -> Dict[str, Any]:
+        if trade_plan_enabled is None:
+            trade_plan_enabled = os.getenv("ANALYST_TRADE_PLAN_ENABLED", "true").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        _, md = analyst_trade_plan_for_signal(signal, view, trade_plan_enabled=trade_plan_enabled)
+        out = dict(view)
+        out["analyst_trade_plan_text"] = md
+        return out
 
     def _fetch_news(self, ticker: str) -> List[Dict[str, str]]:
         if not self.finnhub_api_key:
@@ -234,6 +291,8 @@ class ChatGPTAnalystAgent:
             "entry_condition": entry_condition,
             "paper_ready_blocked": None if blocked in (None, "", []) else str(blocked),
             "paper_ready_explicit": explicit_ready,
+            "trade_plan": parse_trade_plan_dict(data.get("trade_plan")),
+            "analyst_trade_plan_text": "",
         }
 
     def _fallback(self, reason: str) -> Dict[str, Any]:
@@ -248,4 +307,6 @@ class ChatGPTAnalystAgent:
             "entry_condition": "",
             "paper_ready_blocked": None,
             "paper_ready_explicit": False,
+            "trade_plan": {},
+            "analyst_trade_plan_text": "",
         }

@@ -67,6 +67,8 @@ _WORKER_ENV_KEYS: tuple[str, ...] = (
     "MARKET_HTTP_BACKOFF_BASE_SEC",
     "STRATEGY_MODE",
     "SCAN_AI_INCLUDE_FAILS",
+    "ANALYST_TRADE_PLAN_ENABLED",
+    "ANALYST_TRADE_PLAN_LANG",
     "SCAN_MAX_WORKERS",
     "INTRADAY_TIMEFRAME_MINUTES",
     "INTRADAY_LOOKBACK_DAYS",
@@ -252,8 +254,8 @@ def _build_add_env() -> list[dict[str, str]]:
     forced_defaults = {
         "TELEGRAM_SCAN_PRESET": "Explorer",
         "TELEGRAM_FORCE_EXPLORER": "true",
-        "TELEGRAM_MAX_SYMBOLS": "12000",
-        "TELEGRAM_MAX_SYMBOLS_ALL": "15000",
+        "TELEGRAM_MAX_SYMBOLS": "0",
+        "TELEGRAM_MAX_SYMBOLS_ALL": "0",
         "MARKET_DATA_PROVIDER_PRIORITY": "polygon,alpaca,yahoo,finnhub,alpha_vantage",
         # Finviz filter tor bo'lib qolsa universe 3-4 tickerga tushib ketmasligi uchun default o'chiriladi.
         "FETCH_UNIVERSE_FINVIZ_FIRST": "false",

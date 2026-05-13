@@ -125,6 +125,35 @@ def _backtest_symbol_from_remainder(remainder: str) -> str:
     return remainder.strip().upper() or os.getenv("TELEGRAM_BACKTEST_TICKER", "SPY").strip().upper()
 
 
+def _html_plan_from_last_scan(ticker_filter: str) -> str:
+    """Oxirgi saqlangan skandan bitta ticker uchun trade plan (HTML `<pre>`)."""
+
+    path = PROJECT_DIR / "state" / "last_telegram_scan.json"
+    if not path.is_file():
+        return "<b>/plan</b>: avval <code>/scan</code> ishga tushiring."
+    try:
+        blob = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "<b>/plan</b>: <code>last_telegram_scan.json</code> nosoz."
+    rows_raw = blob.get("top_signals") or []
+    rows: List[Dict[str, Any]] = rows_raw if isinstance(rows_raw, list) else []
+    want = (ticker_filter or "").strip().upper()
+    candidates = [r for r in rows if str(r.get("ticker", "")).upper() == want] if want else rows
+    if not candidates:
+        return (
+            f"<b>/plan</b>: <code>{_escape_html(want or '—')}</code> topilmadi. "
+            f"<code>/plan AAPL</code> yoki avval <code>/scan</code>."
+        )
+    r = candidates[0]
+    sym = _escape_html(str(r.get("ticker", "?")))
+    body = (str(r.get("analyst_trade_plan_text") or "").strip()) or (
+        str(r.get("ignition_professional_outline") or "").strip()
+    )
+    if not body:
+        return f"<b>Plan</b> <code>{sym}</code> — matn yo‘q."
+    return f"<b>Trade plan · {sym}</b>\n<pre>{_escape_html(body)}</pre>"
+
+
 def _send_html(token: str, chat_id: str, text: str, *, disable_preview: bool = True) -> None:
     chunks: List[str] = []
     t = text
@@ -347,7 +376,7 @@ def _execute_scan_send_persist(
 
     ctrls = telegram_default_controls()
     if run_all:
-        max_all = _env_int_bounded("TELEGRAM_MAX_SYMBOLS_ALL", 1200, 200, 15000)
+        max_all = _env_int_bounded("TELEGRAM_MAX_SYMBOLS_ALL", 0, 0, 9_999_999)
         ctrls = SidebarControls(
             desk_label=f"{ctrls.desk_label} all-us",
             max_symbols=max_all,
@@ -505,6 +534,7 @@ _help_text = """<b>Mavjud buyruqlar</b>
 /start yoki /help — yordam
 /scan — to‘liq skan (dashboard bilan bir xil konveyer)
 /scanall — kattaroq qamrov (TELEGRAM_MAX_SYMBOLS_ALL dan oladi)
+/plan [TICKER] — oxirgi /scan dan professional trade plan (bo‘sh TICKER = birinchi top)
 /signals — oxirgi /scan ning qisqa natijasi (agar saqlangan bo‘lsa; worker restart/deploydan keyin yo‘qolishi mumkin)
 <i>Avtomatik push:</i> <code>TELEGRAM_AUTO_PUSH_ENABLED=true</code> + <code>TELEGRAM_CHAT_ID</code> — har
 <code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES</code> daqiqada (default 1440 ≈ kuniga 1 marta) yoki
@@ -695,6 +725,11 @@ def main() -> None:
                     if not rows:
                         lines.append("— Hali signal yozuvi yo‘q. Avval <code>/scan</code> yoki <code>/scanall</code> yuboring.\n")
                     _send_html(token, chat_s, "".join(lines))
+                    continue
+
+                if cmd == "plan":
+                    sym_f = (_remainder or "").strip()
+                    _send_html(token, chat_s, _html_plan_from_last_scan(sym_f))
                     continue
 
                 if cmd in {"scan", "scanall"}:

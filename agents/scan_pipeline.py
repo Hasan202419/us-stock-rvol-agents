@@ -187,6 +187,8 @@ def _apply_analyst_fields(
             "chatgpt_risk_flags_json": json.dumps(analyst_view.get("risk_flags") or []),
             "chatgpt_risk_flags_hard_json": json.dumps(analyst_view.get("risk_flags_hard") or []),
             "chatgpt_entry_condition": analyst_view.get("entry_condition", ""),
+            "chatgpt_trade_plan_json": json.dumps(analyst_view.get("trade_plan") or {}),
+            "analyst_trade_plan_text": str(analyst_view.get("analyst_trade_plan_text") or "").strip(),
             "paper_ready_blocked_field": analyst_view.get("paper_ready_blocked"),
             "paper_trade_ready": paper_trade_ready,
             "paper_trade_block_reason": paper_trade_block_reason,
@@ -364,6 +366,8 @@ def run_scan_market(
                 "chatgpt_risk_flags": signal.get("chatgpt_risk_flags_json", "[]"),
                 "chatgpt_flags_hard": signal.get("chatgpt_risk_flags_hard_json", "[]"),
                 "chatgpt_entry_condition": signal.get("chatgpt_entry_condition", ""),
+                "chatgpt_trade_plan_json": signal.get("chatgpt_trade_plan_json", "{}"),
+                "analyst_trade_plan_text": (str(signal.get("analyst_trade_plan_text") or "")[:4000]),
                 "indicator_lineage_json": signal.get("indicator_lineage_json", ""),
                 "risk_level": risk_level_value,
                 "chatgpt_allow_order": chatgpt_allow,
@@ -397,6 +401,11 @@ def run_scan_market(
                 "Ign Stage": signal.get("ignition_trend_stage"),
                 "Ign R dist%": signal.get("ignition_distance_to_resistance_pct"),
                 "ChatGPT Decision": analyst_decision or "—",
+                "Trade plan": (
+                    (str(signal.get("analyst_trade_plan_text") or "").strip()[:200] + "…")
+                    if len(str(signal.get("analyst_trade_plan_text") or "").strip()) > 200
+                    else (str(signal.get("analyst_trade_plan_text") or "").strip() or "—")
+                ),
                 "Risk Level": risk_level_value or "—",
                 "Paper Ready": "Yes" if paper_trade_ready else "No",
                 "Paper Block": paper_trade_block_reason or "—",
@@ -514,7 +523,8 @@ def telegram_default_controls() -> SidebarControls:
         preset = "Explorer"
     return SidebarControls(
         desk_label=os.getenv("TELEGRAM_DESK_LABEL", "TG scan").strip() or "TG scan",
-        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 200, 10, 15000),
+        # 0 = cheklovsiz (Alpaca/Polygon qaytargan barcha US tradable gacha).
+        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 0, 0, 9_999_999),
         preset_name=preset,
         rvol_thresholds=dict(SCAN_PRESETS[preset]),
         max_workers=_env_int_bounded("SCAN_MAX_WORKERS", 10, 2, 20),
