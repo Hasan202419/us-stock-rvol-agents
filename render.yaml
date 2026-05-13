@@ -129,14 +129,18 @@ services:
         sync: false
       - key: TELEGRAM_BOT_REPLY_TOP_N
         sync: false
+      - key: TELEGRAM_APPEND_FRAMEWORKS
+        value: "true"
+      - key: LLM_ANALYST_FRAMEWORK_APPEND
+        value: "true"
       - key: TELEGRAM_SCAN_PRESET
         value: Explorer
       - key: TELEGRAM_FORCE_EXPLORER
         value: "true"
       - key: TELEGRAM_MAX_SYMBOLS
-        value: "12000"
+        value: "0"
       - key: TELEGRAM_MAX_SYMBOLS_ALL
-        value: "15000"
+        value: "0"
       - key: TELEGRAM_AUTO_PUSH_USE_SCANALL
         value: "true"
       - key: SCAN_MAX_WORKERS

@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 import requests
 from openai import OpenAI
 
+from agents.telegram_framework_html import ANALYST_LLM_SYSTEM_APPENDIX
 from agents.trade_plan_format import analyst_trade_plan_for_signal, parse_trade_plan_dict
 
 
@@ -73,6 +74,12 @@ class ChatGPTAnalystAgent:
 
         news = self._fetch_news(signal["ticker"])
         trade_plan_on = os.getenv("ANALYST_TRADE_PLAN_ENABLED", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        framework_append = os.getenv("LLM_ANALYST_FRAMEWORK_APPEND", "true").strip().lower() in {
             "1",
             "true",
             "yes",
@@ -169,6 +176,7 @@ class ChatGPTAnalystAgent:
                                 "Set allow_order=true only when the setup is WATCH/STRONG_WATCH, has no hard blockers, "
                                 "and is acceptable for paper-trade consideration."
                                 + trade_plan_block
+                                + (" " + ANALYST_LLM_SYSTEM_APPENDIX if framework_append else "")
                             ),
                         },
                         {"role": "user", "content": json.dumps(prompt, default=str)},

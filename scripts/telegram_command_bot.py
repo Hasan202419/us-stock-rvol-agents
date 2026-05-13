@@ -32,6 +32,7 @@ from agents.scan_pipeline import (  # noqa: E402
 )
 from agents.scan_presets import SCAN_PRESETS  # noqa: E402
 from agents.session_calendar import NY_TZ, is_weekday_et, ny_session_bounds_for_date  # noqa: E402
+from agents.telegram_framework_html import build_telegram_framework_appendices_html  # noqa: E402
 from agents.simple_backtest_mvp import (  # noqa: E402
     daily_closes_yfinance,
     sma_crossover_long_only_backtest,
@@ -286,9 +287,33 @@ def _format_signal_line(row: Dict[str, Any]) -> str:
         if len(entry_txt) > 140:
             entry_txt = entry_txt[:137] + "…"
         detail_bits.append(f"kirish: {_escape_html(entry_txt)}")
+    ign_bits: list[str] = []
+    vps = str(row.get("volume_pattern_summary") or "").strip()
+    if vps:
+        if len(vps) > 72:
+            vps = vps[:69] + "…"
+        ign_bits.append(f"hajm: {_escape_html(vps)}")
+    stage = str(row.get("ignition_trend_stage") or "").strip()
+    if stage:
+        ign_bits.append(f"Ign:{_escape_html(stage)}")
+    idr = row.get("ignition_distance_to_resistance_pct")
+    if idr is not None:
+        try:
+            ign_bits.append(f"R%≈{_escape_html(round(float(idr), 2))}")
+        except (TypeError, ValueError):
+            pass
+    icp = row.get("ignition_continuation_probability")
+    if icp is not None:
+        try:
+            ign_bits.append(f"P≈{_escape_html(round(float(icp), 3))}")
+        except (TypeError, ValueError):
+            pass
+    lines_out = [head]
     if detail_bits:
-        return head + "\n   └ " + " · ".join(detail_bits)
-    return head
+        lines_out.append("   └ " + " · ".join(detail_bits))
+    if ign_bits:
+        lines_out.append("   └ " + " · ".join(ign_bits))
+    return "\n".join(lines_out)
 
 
 def _normalize_tv_symbol(raw: str) -> str:
@@ -313,7 +338,7 @@ def _persist_last_scan(
 ) -> None:
     state_dir = PROJECT_DIR / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    top_n = _env_int_bounded("TELEGRAM_BOT_TOP_ROWS", 6, 5, 25)
+    top_n = _env_int_bounded("TELEGRAM_BOT_TOP_ROWS", 6, 5, 80)
     payload = {
         "saved_at_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "universe_size": universe_size,
@@ -332,7 +357,7 @@ def _truthy_env(name: str, *, default: bool = False) -> bool:
 
 
 def _telegram_reply_top_n() -> int:
-    return _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 6, 3, 15)
+    return _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 6, 3, 40)
 
 
 def _resolve_auto_push_chat_id(allowed: Optional[set[str]]) -> Optional[str]:
@@ -447,6 +472,8 @@ def _execute_scan_send_persist(
             "— Hozircha mos signal yo‘q. Bozor sust bo‘lishi mumkin; keyinroq qayta /scan qiling.\n"
         )
     _send_html(token, chat_s, "".join(lines))
+    if _truthy_env("TELEGRAM_APPEND_FRAMEWORKS", default=True):
+        _send_html(token, chat_s, build_telegram_framework_appendices_html())
 
 
 def _auto_push_loop(token: str, chat_id: str, scan_lock: threading.Lock) -> None:
@@ -532,6 +559,10 @@ _help_text = """<b>Mavjud buyruqlar</b>
 /scanall — kattaroq qamrov (TELEGRAM_MAX_SYMBOLS_ALL dan oladi)
 /plan [TICKER] — oxirgi /scan dan professional trade plan (bo‘sh TICKER = birinchi top)
 /signals — oxirgi /scan ning qisqa natijasi (agar saqlangan bo‘lsa; worker restart/deploydan keyin yo‘qolishi mumkin)
+<i>Telegram:</i> <code>TELEGRAM_BOT_REPLY_TOP_N</code> (3…40, sukut 6) — skan/signalsda ko‘rinadigan top qatorlar; 
+<code>TELEGRAM_BOT_TOP_ROWS</code> (5…80) — <code>last_telegram_scan.json</code> ga saqlanadigan maks. qatorlar. 
+<code>TELEGRAM_APPEND_FRAMEWORKS</code> (sukut yoqilgan) — xabar oxirida yig‘iladigan analyst / ignition / HASAN qo‘llanmalari.
+<i>LLM:</i> <code>LLM_ANALYST_FRAMEWORK_APPEND</code> (sukut yoqilgan) — ChatGPT/DeepSeek system promptiga xuddi shu tuzilma qisqacha qo‘shiladi.
 <i>Avtomatik push:</i> <code>TELEGRAM_AUTO_PUSH_ENABLED=true</code> + <code>TELEGRAM_CHAT_ID</code> — har
 <code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES</code> daqiqada (default 1440 ≈ kuniga 1 marta) yoki
 <code>TELEGRAM_AUTO_PUSH_AT=18:30</code> + <code>TELEGRAM_AUTO_PUSH_TZ=Asia/Tashkent</code> bilan NY hafta ichida
@@ -720,7 +751,10 @@ def main() -> None:
                         lines.append(_format_signal_line(r) + "\n")
                     if not rows:
                         lines.append("— Hali signal yozuvi yo‘q. Avval <code>/scan</code> yoki <code>/scanall</code> yuboring.\n")
-                    _send_html(token, chat_s, "".join(lines))
+                    msg = "".join(lines)
+                    if _truthy_env("TELEGRAM_APPEND_FRAMEWORKS", default=True):
+                        msg += "\n" + build_telegram_framework_appendices_html()
+                    _send_html(token, chat_s, msg)
                     continue
 
                 if cmd == "plan":
