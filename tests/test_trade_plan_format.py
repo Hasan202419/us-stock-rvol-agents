@@ -20,6 +20,17 @@ def test_parse_trade_plan_dict_filters_keys() -> None:
     assert all(k in d for k in TRADE_PLAN_KEYS)
 
 
+def test_parse_trade_plan_dict_accepts_json_string() -> None:
+    raw = '{"company": "Globex", "reason_catalyst": "Guidance"}'
+    d = parse_trade_plan_dict(raw)
+    assert d["company"] == "Globex"
+    assert d["reason_catalyst"] == "Guidance"
+
+
+def test_parse_trade_plan_dict_invalid_json_string_returns_empty() -> None:
+    assert parse_trade_plan_dict("{not json") == {}
+
+
 def test_trade_plan_dict_has_content_false_when_empty() -> None:
     assert trade_plan_dict_has_content({k: "" for k in TRADE_PLAN_KEYS}) is False
 

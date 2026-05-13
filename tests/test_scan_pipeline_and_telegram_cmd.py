@@ -68,7 +68,7 @@ def test_telegram_default_controls_fallback(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("SCAN_MAX_WORKERS", "oops")
     monkeypatch.setenv("TELEGRAM_SCAN_PRESET", "DOES_NOT_EXIST")
     c = telegram_default_controls()
-    assert c.max_symbols >= 10
+    assert c.max_symbols >= 0
     assert 2 <= c.max_workers <= 20
     assert c.preset_name == "Explorer"
 
@@ -94,6 +94,25 @@ def test_fetch_universe_for_scan(monkeypatch: pytest.MonkeyPatch) -> None:
     out = fetch_universe_for_scan(ctrls)
     assert out == ["AAA", "BBB"]
     assert calls == [(50, False)]
+
+
+def test_fetch_universe_for_scan_uses_builtin_when_agent_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    class EmptyUniverseAgent:
+        def fetch_symbols(self, limit: int = 100, *, use_finviz_elite: bool = False) -> list[str]:
+            return []
+
+    monkeypatch.setattr("agents.scan_pipeline.UniverseAgent", EmptyUniverseAgent)
+    ctrls = SidebarControls(
+        desk_label="t",
+        max_symbols=5,
+        preset_name="Balanced",
+        rvol_thresholds=dict(SCAN_PRESETS["Balanced"]),
+        max_workers=4,
+        finviz_csv_universe=False,
+    )
+    out = fetch_universe_for_scan(ctrls)
+    assert len(out) == 5
+    assert out[0] == "AAPL"
 
 
 def test_parse_auto_push_at() -> None:

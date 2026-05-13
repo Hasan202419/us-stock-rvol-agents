@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, List
 
@@ -24,6 +25,15 @@ TRADE_PLAN_KEYS: tuple[str, ...] = (
 
 
 def parse_trade_plan_dict(raw: Any) -> Dict[str, str]:
+    """`trade_plan` ba'zan JSON qatori bo'lib kelishi mumkin — `json.loads` bilan dictga aylantiramiz."""
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s.startswith("{"):
+            try:
+                parsed = json.loads(s)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+            return parse_trade_plan_dict(parsed)
     if not isinstance(raw, dict):
         return {}
     return {k: str(raw.get(k, "") or "").strip() for k in TRADE_PLAN_KEYS}
