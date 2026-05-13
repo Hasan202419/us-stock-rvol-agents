@@ -421,7 +421,6 @@ def _execute_scan_send_persist(
     _persist_last_scan(ranked=ranked, summary=summary, universe_size=len(tickers))
 
     top_n = _telegram_reply_top_n()
-    shown = min(top_n, len(ranked)) if ranked else 0
     lines = [
         "<b>Skan yakunlandi</b>\n",
         f"Desk: {_escape_html(summary.get('desk_label'))} · ",
@@ -429,9 +428,6 @@ def _execute_scan_send_persist(
         f"Tickers: {summary.get('tickers_scanned')} · ",
         f"eligible (strategy+AI): {summary.get('eligible_signals')} · ",
         f"paper-ready: {summary.get('paper_ready_signals', '—')}\n",
-        f"<i>Universe ro‘yxat: <code>{len(tickers)}</code> ta ticker · "
-        f"Top: <code>{shown}</code> ta ko‘rsatiladi (max <code>{top_n}</code>, "
-        f"<code>TELEGRAM_BOT_REPLY_TOP_N</code>) — kengroq qamrov uchun <code>/scanall</code>.</i>\n",
         _format_market_clock_footer(),
         "<b>Top</b>\n",
     ]
