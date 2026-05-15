@@ -515,6 +515,7 @@ def run_scan_market(
             cloned["paper_trade_block_reason"] = "Watchlist only: strategy filtersdan to'liq o'tmagan."
             cloned["chatgpt_decision"] = cloned.get("chatgpt_decision") or "WATCHLIST"
             ranked_signals.append(cloned)
+    watchlist_fallback_count = sum(1 for item in ranked_signals if item.get("watchlist_only"))
     paper_ready_count = sum(1 for item in signals if item.get("paper_trade_ready"))
 
     if os.getenv("TELEGRAM_ALERT_ON_SCAN", "").strip().lower() in {"1", "true", "yes", "on"}:
@@ -546,6 +547,7 @@ def run_scan_market(
     summary = {
         "tickers_scanned": scanned,
         "eligible_signals": len(signals),
+        "watchlist_fallback_count": watchlist_fallback_count,
         "paper_ready_signals": paper_ready_count,
         "failed_signals": scanned - len(signals),
         "symbols_input": scanned,

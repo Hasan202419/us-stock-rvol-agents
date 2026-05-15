@@ -195,6 +195,57 @@ def test_effective_allowed_bot_id_only_opens_filter(monkeypatch: pytest.MonkeyPa
     assert bot._effective_allowed_chat_ids("7839339510:AA_testfake") is None
 
 
+def test_partition_ranked_splits_watchlist() -> None:
+    bot = _load_command_bot_script()
+    ranked = [
+        {"ticker": "AAPL", "strategy_pass": True},
+        {"ticker": "MSFT", "watchlist_only": True},
+    ]
+    passes, watch = bot._partition_ranked(ranked)
+    assert len(passes) == 1 and passes[0]["ticker"] == "AAPL"
+    assert len(watch) == 1 and watch[0]["ticker"] == "MSFT"
+
+
+def test_signal_status_badge_watchlist() -> None:
+    bot = _load_command_bot_script()
+    assert "KUZATUV" in bot._signal_status_badge({"watchlist_only": True})
+    assert "PAPER" in bot._signal_status_badge({"paper_trade_ready": True})
+
+
+def test_build_scan_result_html_separates_sections() -> None:
+    bot = _load_command_bot_script()
+    ranked = [
+        {"ticker": "AAPL", "strategy_pass": True, "score": 80, "strategy_name": "rvol"},
+        {"ticker": "MSFT", "watchlist_only": True, "score": 40, "strategy_name": "rvol", "failed_rules": ["rvol"]},
+    ]
+    summary = {
+        "desk_label": "t",
+        "scan_preset": "Explorer",
+        "tickers_scanned": 10,
+        "eligible_signals": 1,
+        "paper_ready_signals": 0,
+        "watchlist_fallback_count": 1,
+    }
+    html = bot._build_scan_result_html(ranked, summary, top_n=5, include_watchlist=True)
+    assert "Signallar" in html
+    assert "Kuzatuv ro‘yxati" in html
+    assert "AAPL" in html and "MSFT" in html
+
+
+def test_auto_push_pass_only_default_is_false_for_babir(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot = _load_command_bot_script()
+    monkeypatch.delenv("TELEGRAM_AUTO_PUSH_PASS_ONLY", raising=False)
+    assert not bot._truthy_env("TELEGRAM_AUTO_PUSH_PASS_ONLY", default=False)
+
+
+def test_reply_keyboard_markup_structure() -> None:
+    bot = _load_command_bot_script()
+    kb = bot._reply_keyboard_markup()
+    assert "keyboard" in kb
+    texts = {btn["text"] for row in kb["keyboard"] for btn in row}
+    assert bot.BTN_SCAN in texts
+
+
 def test_effective_allowed_keeps_real_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "7839339510:AA_testfake")
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "111222333")

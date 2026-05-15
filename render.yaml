@@ -139,6 +139,22 @@ services:
         value: "0"
       - key: TELEGRAM_AUTO_PUSH_USE_SCANALL
         value: "true"
+      - key: TELEGRAM_AUTO_PUSH_ENABLED
+        value: "true"
+      - key: TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES
+        value: "1440"
+      - key: TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC
+        value: "120"
+      - key: TELEGRAM_AUTO_PUSH_PASS_ONLY
+        value: "false"
+      - key: TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST
+        value: "true"
+      - key: SCAN_SHOW_WATCHLIST_ON_EMPTY
+        value: "true"
+      - key: SCAN_EMPTY_WATCHLIST_TOP_N
+        value: "10"
+      - key: TELEGRAM_BOT_REPLY_TOP_N
+        value: "10"
       - key: SCAN_MAX_WORKERS
         value: "12"
       - key: TELEGRAM_DESK_LABEL

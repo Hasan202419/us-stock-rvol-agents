@@ -41,13 +41,18 @@ class StrategyAgent:
 
         signal = dict(data)
         if snap:
+            daily_rsi = snap.get("rsi_14")
+            daily_atr = snap.get("atr_14")
             signal.update(
                 {
                     "daily_bar_timestamp_ms": snap.get("bar_timestamp_ms"),
                     "daily_ema_9": snap.get("ema_9"),
                     "daily_ema_20": snap.get("ema_20"),
-                    "daily_rsi_14": snap.get("rsi_14"),
-                    "daily_atr_14": snap.get("atr_14"),
+                    "daily_rsi_14": daily_rsi,
+                    "daily_atr_14": daily_atr,
+                    # RVOL rejimida dashboard jadvali uchun (sessiya indikatorlari yo‘q).
+                    "rsi_14": daily_rsi,
+                    "atr_14": daily_atr,
                     "indicators_daily_json": json.dumps(
                         {k: v for k, v in snap.items() if k != "closes_series_len"},
                         default=str,

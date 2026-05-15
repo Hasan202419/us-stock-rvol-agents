@@ -266,10 +266,40 @@ def render_ai_provider_status() -> None:
         st.caption("AI provayder holati normal. Skan natijasida `AI` ustunida qarorlar ko'rinadi.")
 
 
+def _display_metric(signal: Dict[str, Any], *keys: str) -> Any:
+    """Jadvalda None o‘rniga —; RVOL rejimida kunlik indikatorlarni ham qabul qiladi."""
+
+    for key in keys:
+        val = signal.get(key)
+        if val is not None and val != "":
+            return val
+    return "—"
+
+
+def _signal_row_status(signal: Dict[str, Any]) -> str:
+    if signal.get("watchlist_only"):
+        return "WATCHLIST"
+    if signal.get("paper_trade_ready"):
+        return "PAPER READY"
+    if signal.get("strategy_pass"):
+        return "PASS"
+    return "BLOCKED"
+
+
+def _split_pass_and_watchlist(signals: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    passes = [s for s in signals if not s.get("watchlist_only")]
+    watchlist = [s for s in signals if s.get("watchlist_only")]
+    return passes, watchlist
+
+
 def _signal_table_row(signal: Dict[str, Any], strategy_mode: str) -> Dict[str, Any]:
     paper_ready = bool(signal.get("paper_trade_ready"))
     block_reason = str(signal.get("paper_trade_block_reason") or "").strip()
+    intraday = _intraday_strategy_mode(strategy_mode)
+    rsi_label = "RSI (sessiya)" if intraday else "RSI (kunlik)"
+    atr_label = "ATR (sessiya)" if intraday else "ATR (kunlik)"
     row: Dict[str, Any] = {
+        "Holat": _signal_row_status(signal),
         "Ticker": signal.get("ticker"),
         "Price": signal.get("price"),
         "RVOL": signal.get("rvol"),
@@ -281,13 +311,14 @@ def _signal_table_row(signal: Dict[str, Any], strategy_mode: str) -> Dict[str, A
         "Change %": signal.get("change_percent"),
         "Volume": signal.get("volume"),
         "Avg Volume": signal.get("avg_volume"),
-        "TP": signal.get("take_profit_suggestion"),
-        "SL": signal.get("stop_suggestion"),
-        "VWAP": signal.get("session_vwap"),
-        "RSI (sessiya)": signal.get("rsi_14"),
-        "ATR (sessiya)": signal.get("atr_14"),
-        "VWAP cross": signal.get("vwap_cross"),
-        "Risk": signal.get("risk_level"),
+        "TP": _display_metric(signal, "take_profit_suggestion", "trade_tp1"),
+        "SL": _display_metric(signal, "stop_suggestion", "trade_stop_loss"),
+        "Kirish/SL/TP": _display_metric(signal, "trade_levels_line"),
+        "VWAP": _display_metric(signal, "session_vwap"),
+        rsi_label: _display_metric(signal, "rsi_14", "daily_rsi_14"),
+        atr_label: _display_metric(signal, "atr_14", "daily_atr_14"),
+        "VWAP cross": _display_metric(signal, "vwap_cross"),
+        "Risk": _display_metric(signal, "risk_level"),
         "Data delay": signal.get("data_delay"),
         "Updated": signal.get("updated_time"),
         "TV Chart": tradingview_url(signal.get("ticker")),
@@ -1010,13 +1041,15 @@ def main() -> None:
 
     tabs = st.tabs(["Mos kelganlar", "Barcha skan", "Paper savdo"])
 
-    table = signals_dataframe(signals, current_mode)
+    pass_signals, watchlist_signals = _split_pass_and_watchlist(signals)
+    table = signals_dataframe(pass_signals, current_mode)
+    watchlist_table = signals_dataframe(watchlist_signals, current_mode) if watchlist_signals else None
 
     with tabs[0]:
         st.subheader("Tez qaror jadvali")
         if not summary:
             st.info("Avval **Run market scan**.", icon="📡")
-        elif table.empty:
+        elif table.empty and not watchlist_signals:
             if _intraday_strategy_mode(str(current_mode)):
                 st.warning(
                     "Hozircha VWAP cross signali yo‘q. **Barcha skan** tabida batafsil ko‘ring yoki "
@@ -1033,26 +1066,47 @@ def main() -> None:
                     "sabablar bor. Tez yechim: sidebar → **Explorer** preset."
                 )
         else:
-            st.caption("Avval `Paper=READY` va yuqori `Score` setup-larga qarang; qolgan tafsilotlar pastdagi bo‘limlarda.")
-            st.dataframe(
-                table,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "TV Chart": st.column_config.LinkColumn(
-                        "TV Chart",
-                        help="TradingView chartni yangi tabda oching",
-                        display_text="Chart",
-                    )
-                },
-            )
+            if pass_signals:
+                st.caption(
+                    "Faqat strategiya filtridan o‘tgan setup-lar. "
+                    "`Paper=READY` va yuqori `Score` ustunlariga qarang."
+                )
+                st.dataframe(
+                    table,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "TV Chart": st.column_config.LinkColumn(
+                            "TV Chart",
+                            help="TradingView chartni yangi tabda oching",
+                            display_text="Chart",
+                        )
+                    },
+                )
+            elif watchlist_signals:
+                st.warning(
+                    "Hozircha **haqiqiy signal yo‘q** — pastda faqat kuzatuv ro‘yxati (filtrlardan to‘liq o‘tmagan).",
+                    icon="⚠️",
+                )
 
-            if st.session_state.get("platform_show_3d", False):
+            wl_count = int(summary.get("watchlist_fallback_count") or len(watchlist_signals))
+            if watchlist_signals and watchlist_table is not None:
+                with st.expander(
+                    f"Kuzatuv ro‘yxati ({wl_count}) — signal emas, yaqin kandidatlar",
+                    expanded=not pass_signals,
+                ):
+                    st.caption(
+                        "RVOL yoki boshqa qoidalar yetmagan tickerlar. "
+                        "KIRISH/SL/TP taxminiy — savdo uchun PASS kerak."
+                    )
+                    st.dataframe(watchlist_table, use_container_width=True, hide_index=True)
+
+            if st.session_state.get("platform_show_3d", False) and pass_signals:
                 with st.expander("3D va 2D signal fokus manzarasi", expanded=False):
-                    render_signals_spatial_landscape(signals)
+                    render_signals_spatial_landscape(pass_signals)
 
             if _intraday_strategy_mode(str(current_mode)):
-                sigs_with_chart = [s for s in signals if s.get("chart_session_bars")]
+                sigs_with_chart = [s for s in pass_signals if s.get("chart_session_bars")]
                 if sigs_with_chart:
                     with st.expander("Intraday grafik (sham + VWAP + BUY/SELL/STOP/TIME)", expanded=False):
                         pick = st.selectbox(
@@ -1065,7 +1119,7 @@ def main() -> None:
 
             with st.expander("ChatGPT izohlari"):
                 missing_reason_count = 0
-                for signal in signals:
+                for signal in pass_signals:
                     ticker = signal["ticker"]
                     decision = signal.get("chatgpt_decision") or "—"
                     reason = str(signal.get("chatgpt_reason") or "").strip()
@@ -1076,14 +1130,14 @@ def main() -> None:
                 if missing_reason_count:
                     st.caption(f"Izohsiz yoki qisqa javob: {missing_reason_count} ta ticker.")
 
-            if _volume_ignition_mode(str(current_mode)) and signals:
+            if _volume_ignition_mode(str(current_mode)) and pass_signals:
                 with st.expander("Volume ignition — strukturali tahlil (REASON→EXECUTION)", expanded=False):
                     pick_vi = st.selectbox(
                         "Ticker",
-                        [s["ticker"] for s in signals],
+                        [s["ticker"] for s in pass_signals],
                         key="vi_professional_outline",
                     )
-                    svi = next(s for s in signals if s["ticker"] == pick_vi)
+                    svi = next(s for s in pass_signals if s["ticker"] == pick_vi)
                     st.markdown(svi.get("ignition_professional_outline") or "—")
 
     with tabs[1]:
@@ -1111,7 +1165,7 @@ def main() -> None:
             st.caption("Diskdan: `logs/full_scan.csv`, signal loglari: `logs/signals.csv`.")
 
     with tabs[2]:
-        render_paper_trading_panel(signals)
+        render_paper_trading_panel(pass_signals if summary else signals)
 
 
 if __name__ == "__main__":
