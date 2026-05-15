@@ -29,7 +29,15 @@ def _save_cache(data: dict[str, Any]) -> None:
 
 def fetch_zoya_compliance(symbol: str, api_key: Optional[str] = None) -> HalalReport:
     """Zoya GraphQL (SPEC bilan mos). API kalit bo‘lmasa → unknown / fallback."""
-    key = api_key or get_settings().zoya_api_key
+    cfg = get_settings()
+    if not cfg.zoya_enabled:
+        return HalalReport(
+            symbol=symbol,
+            status="unknown",
+            source="fallback",
+            detail="Zoya disabled (ZOYA_ENABLED=false)",
+        )
+    key = api_key or cfg.zoya_api_key
     if not key:
         return HalalReport(symbol=symbol, status="unknown", source="fallback", detail="ZOYA_API_KEY missing")
 
@@ -64,6 +72,13 @@ def fetch_zoya_compliance(symbol: str, api_key: Optional[str] = None) -> HalalRe
     }
     try:
         r = requests.post("https://api.zoya.finance/graphql", json=query, headers=headers, timeout=12)
+        if r.status_code == 401:
+            return HalalReport(
+                symbol=symbol,
+                status="unknown",
+                source="fallback",
+                detail="ZOYA_API_KEY invalid or expired (401) — halal gate uses ratios only",
+            )
         r.raise_for_status()
         data = r.json()
         raw = (

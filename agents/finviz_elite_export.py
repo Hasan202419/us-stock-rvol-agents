@@ -85,7 +85,10 @@ def symbols_from_finviz_csv(
     limit: int = 400,
     encoding: str = "utf-8",
 ) -> list[str]:
-    """CSV dan birinchi mos ustun bo‘yicha ticker ro‘yxati (No.,Ticker,...)."""
+    """CSV dan birinchi mos ustun bo‘yicha ticker ro‘yxati (No.,Ticker,...).
+
+    ``limit <= 0`` — CSV dagi barcha qatorlar (ustun bo‘yicha).
+    """
 
     text = content.decode(encoding, errors="replace")
     sample = text[:4096]
@@ -122,7 +125,7 @@ def symbols_from_finviz_csv(
             if len(sym) <= 12 and sym.isascii() and sym not in seen:
                 seen.add(sym)
                 symbols.append(sym)
-                if len(symbols) >= limit:
+                if limit > 0 and len(symbols) >= limit:
                     break
 
-    return symbols[:limit]
+    return symbols if limit <= 0 else symbols[:limit]

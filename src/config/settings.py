@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +41,7 @@ class JarvisSettings(BaseSettings):
     )
 
     zoya_api_key: Optional[str] = Field(None, validation_alias="ZOYA_API_KEY")
+    zoya_enabled: bool = Field(True, validation_alias="ZOYA_ENABLED")
 
     deepseek_api_key: Optional[str] = Field(None, validation_alias="DEEPSEEK_API_KEY")
 
@@ -68,6 +69,16 @@ class JarvisSettings(BaseSettings):
     halal_max_debt_ratio: float = Field(0.30, validation_alias="HALAL_MAX_DEBT_RATIO")
     halal_max_impure_rev: float = Field(0.05, validation_alias="HALAL_MAX_IMPURE_REV")
     halal_max_cash_ratio: float = Field(0.30, validation_alias="HALAL_MAX_CASH_RATIO")
+
+    @field_validator("zoya_enabled", mode="before")
+    @classmethod
+    def _coerce_zoya_enabled(cls, v: object) -> bool:
+        if isinstance(v, bool):
+            return v
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return True
+        s = str(v).strip().lower()
+        return s in {"1", "true", "yes", "on"}
 
 
 @lru_cache
