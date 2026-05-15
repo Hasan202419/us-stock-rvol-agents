@@ -26,6 +26,33 @@ def test_allow_order_infers_true_when_missing_and_watchworthy() -> None:
     assert out["paper_ready_explicit"] is True
 
 
+def test_normalize_response_parses_trade_plan() -> None:
+    agent = ChatGPTAnalystAgent(openai_api_key=None, finnhub_api_key=None)
+    out = agent._normalize_response(  # type: ignore[attr-defined]
+        {
+            "decision": "WATCH",
+            "confidence": 6,
+            "reason": "Volume expansion near resistance.",
+            "risk_level": "MEDIUM",
+            "allow_order": True,
+            "risk_flags": [],
+            "risk_flags_hard": [],
+            "entry_condition": "Break above 12.50",
+            "trade_plan": {
+                "company": "Acme Corp",
+                "reason_catalyst": "Unusual volume",
+                "entry_px": "12.40",
+                "stop_px": "11.80",
+                "target_px": "14.00",
+            },
+        }
+    )
+    assert out["trade_plan"]["company"] == "Acme Corp"
+    assert out["trade_plan"]["entry_price"] == "12.40"
+    assert out["trade_plan"]["stop_loss"] == "11.80"
+    assert out["trade_plan"]["target_price"] == "14.00"
+
+
 def test_allow_order_infers_false_when_hard_flags_exist() -> None:
     agent = ChatGPTAnalystAgent(openai_api_key=None, finnhub_api_key=None)
     out = agent._normalize_response(  # type: ignore[attr-defined]

@@ -1140,6 +1140,25 @@ def main() -> None:
                     svi = next(s for s in pass_signals if s["ticker"] == pick_vi)
                     st.markdown(svi.get("ignition_professional_outline") or "—")
 
+            if pass_signals:
+                with st.expander("Professional trade plan (analyst framework)", expanded=False):
+                    pick_plan = st.selectbox(
+                        "Ticker",
+                        [s["ticker"] for s in pass_signals],
+                        key="moskelgan_trade_plan_ticker",
+                    )
+                    sig_plan = next(s for s in pass_signals if s["ticker"] == pick_plan)
+                    plan_md = (str(sig_plan.get("analyst_trade_plan_text") or "")).strip()
+                    if not plan_md:
+                        plan_md = deterministic_trade_plan_from_signal(
+                            sig_plan,
+                            lang=os.getenv("ANALYST_TRADE_PLAN_LANG", "en"),
+                        )
+                    if plan_md.strip():
+                        st.markdown(plan_md)
+                    else:
+                        st.caption("Trade plan hali yo‘q — skanni LLM yoki ignition bilan qayta ishga tushiring.")
+
     with tabs[1]:
         st.subheader("Barcha tekshirilgan symbolar")
         st.caption("“Mos kelganlar” bo‘sh bo‘lsa ham, bu yerda barcha ticker va *Failed Rules* ko‘rinadi.")

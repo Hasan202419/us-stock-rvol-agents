@@ -121,3 +121,11 @@ def test_volume_ignition_short_history_fails(monkeypatch) -> None:
     out = VolumeIgnitionStrategyAgent().evaluate(payload, None)
     assert out["strategy_pass"] is False
     assert "bars_history" in out["failed_rules"]
+
+
+def test_infer_trend_stage_labels() -> None:
+    agent = VolumeIgnitionStrategyAgent()
+    assert agent._infer_trend_stage(0.01, 2.5, 3.0) == "Ignition"
+    assert agent._infer_trend_stage(0.03, 1.5, 1.5) == "Accumulation"
+    assert agent._infer_trend_stage(0.05, 1.5, 1.5) == "Breakout"
+    assert agent._infer_trend_stage(0.08, 1.0, 1.0) == "Monitor"

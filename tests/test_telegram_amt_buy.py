@@ -42,3 +42,13 @@ def test_build_amt_buy_alert_html_empty() -> None:
     body = build_amt_buy_alert_html([], summary={"tickers_scanned": 100, "amt_buy_count": 0})
     assert "AMT" in body
     assert "yo‘q" in body or "yo'q" in body
+
+
+def test_build_amt_buy_alert_html_includes_near_watch() -> None:
+    body = build_amt_buy_alert_html(
+        [],
+        summary={"tickers_scanned": 500, "amt_buy_count": 0},
+        near_rows=[{"ticker": "MSFT", "amt_ok": True, "amt_val": 400.0, "price": 401.0}],
+    )
+    assert "VAL yaqin" in body
+    assert "MSFT" in body

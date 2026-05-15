@@ -134,7 +134,7 @@ services:
       - key: TELEGRAM_FORCE_EXPLORER
         value: "true"
       - key: TELEGRAM_MAX_SYMBOLS
-        value: "0"
+        value: "1200"
       - key: TELEGRAM_MAX_SYMBOLS_ALL
         value: "0"
       - key: TELEGRAM_AUTO_PUSH_USE_SCANALL
@@ -158,9 +158,11 @@ services:
       - key: SCAN_SHOW_WATCHLIST_ON_EMPTY
         value: "true"
       - key: SCAN_EMPTY_WATCHLIST_TOP_N
-        value: "10"
+        value: "25"
       - key: TELEGRAM_BOT_REPLY_TOP_N
-        value: "10"
+        value: "20"
+      - key: TELEGRAM_AMT_NEAR_VAL_TOP_N
+        value: "15"
       - key: SCAN_MAX_WORKERS
         value: "12"
       - key: TELEGRAM_DESK_LABEL

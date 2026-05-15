@@ -37,7 +37,9 @@ from agents.trade_plan_format import deterministic_trade_plan_from_signal  # noq
 from agents.telegram_amt_buy import (  # noqa: E402
     amt_buy_alert_enabled,
     build_amt_buy_alert_html,
+    enrich_ranked_for_babir,
     format_amt_buy_line,
+    format_amt_zone_inline,
 )
 from agents.simple_backtest_mvp import (  # noqa: E402
     daily_closes_yfinance,
@@ -343,8 +345,10 @@ def _partition_ranked(ranked: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]
 
 
 def _signal_status_badge(row: Dict[str, Any]) -> str:
-    if bool(row.get("amt_buy_signal")):
+    if bool(row.get("amt_buy_signal")) or row.get("babir_amt_card"):
         return "🟢 AMT BUY"
+    if row.get("babir_amt_near"):
+        return "🟡 AMT VAL"
     if row.get("watchlist_only"):
         return "🟡 KUZATUV"
     if bool(row.get("paper_trade_ready")):
@@ -407,12 +411,16 @@ def _format_signal_line(row: Dict[str, Any]) -> str:
         if len(mtf) > 140:
             mtf = mtf[:137] + "…"
         lines_out.append(f"↳ {_escape_html(mtf)}")
-    amt_s = str(row.get("amt_summary_line") or "").strip()
-    if amt_s:
-        if len(amt_s) > 130:
-            amt_s = amt_s[:127] + "…"
-        prefix = "🟢 " if bool(row.get("amt_buy_signal")) else ""
-        lines_out.append(f"↳ {prefix}{_escape_html(amt_s)}")
+    amt_inline = format_amt_zone_inline(row)
+    if amt_inline:
+        lines_out.append(f"↳ 🟢 <b>{_escape_html(amt_inline)}</b>" if bool(row.get("amt_buy_signal")) else f"↳ {_escape_html(amt_inline)}")
+    else:
+        amt_s = str(row.get("amt_summary_line") or "").strip()
+        if amt_s:
+            if len(amt_s) > 130:
+                amt_s = amt_s[:127] + "…"
+            prefix = "🟢 " if bool(row.get("amt_buy_signal")) else ""
+            lines_out.append(f"↳ {prefix}{_escape_html(amt_s)}")
 
     if row.get("watchlist_only"):
         failed = row.get("failed_rules")
@@ -452,8 +460,18 @@ def _build_scan_result_html(
         lines.append(stats + "\n")
     lines.append(_format_market_clock_footer())
 
-    if not amt_buy_alert_enabled():
-        amt_rows = summary.get("amt_buy_signals") or []
+    show_babir_amt = _truthy_env("TELEGRAM_BABIR_AMT_IN_SCAN", default=True)
+    amt_rows = summary.get("amt_buy_signals") or []
+    if show_babir_amt and isinstance(amt_rows, list) and amt_rows:
+        show_amt = [r for r in amt_rows if isinstance(r, dict) and r.get("amt_buy_signal")][:top_n]
+        if show_amt:
+            lines.append(f"<b>🟢 AMT BUY · VAL↑</b> <i>({len(show_amt)})</i>\n")
+            for r in show_amt:
+                lines.append(
+                    format_amt_buy_line(r, chart_url=_tradingview_url(str(r.get("ticker", ""))))
+                    + "\n\n"
+                )
+    elif not amt_buy_alert_enabled():
         if isinstance(amt_rows, list) and amt_rows:
             show_amt = [r for r in amt_rows if isinstance(r, dict) and r.get("amt_buy_signal")][:top_n]
             if show_amt:
@@ -514,12 +532,13 @@ def _persist_last_scan(
     amt_persist = summary.get("amt_buy_signals") or []
     if not isinstance(amt_persist, list):
         amt_persist = []
+    amt_cap = _amt_buy_top_n()
     payload = {
         "saved_at_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "universe_size": universe_size,
         "summary": summary,
         "top_signals": ranked[:top_n],
-        "amt_buy_signals": amt_persist[:top_n],
+        "amt_buy_signals": amt_persist[:amt_cap],
     }
     path = state_dir / "last_telegram_scan.json"
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
@@ -533,7 +552,11 @@ def _truthy_env(name: str, *, default: bool = False) -> bool:
 
 
 def _telegram_reply_top_n() -> int:
-    return _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 6, 1, 500)
+    return _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 20, 1, 500)
+
+
+def _amt_buy_top_n() -> int:
+    return _env_int_bounded("TELEGRAM_AMT_BUY_TOP_N", 20, 1, 50)
 
 
 def _resolve_auto_push_chat_id(allowed: Optional[set[str]]) -> Optional[str]:
@@ -571,12 +594,6 @@ def _execute_scan_send_persist(
     """Skan → state → HTML xabar ( /scan va fon push uchun umumiy yo‘l )."""
 
     kb = _reply_keyboard_markup()
-    start_msg = "Keng qamrovli skan boshlandi…" if run_all else "Skan boshlandi…"
-    if heading_html:
-        _send_html(token, chat_s, f"{heading_html}\n{start_msg}", reply_markup=kb)
-    else:
-        _send_html(token, chat_s, start_msg, reply_markup=kb)
-
     ctrls = telegram_default_controls()
     if run_all:
         max_all = _env_int_bounded("TELEGRAM_MAX_SYMBOLS_ALL", 0, 0, 9_999_999)
@@ -589,9 +606,21 @@ def _execute_scan_send_persist(
             finviz_csv_universe=ctrls.finviz_csv_universe,
         )
     tickers = fetch_universe_for_scan(ctrls)
+    n_tickers = len(tickers)
+    if run_all:
+        start_msg = f"Keng skan boshlandi… <b>{n_tickers}</b> ticker tekshiriladi."
+    else:
+        start_msg = f"Skan boshlandi… <b>{n_tickers}</b> ticker (2 xabar: skan + AMT)."
+    if heading_html:
+        _send_html(token, chat_s, f"{heading_html}\n{start_msg}", reply_markup=kb)
+    else:
+        _send_html(token, chat_s, start_msg, reply_markup=kb)
 
     prev_alert_on_scan = os.environ.get("TELEGRAM_ALERT_ON_SCAN")
+    prev_yahoo_first = os.environ.get("INTRADAY_YAHOO_BEFORE_POLYGON")
     os.environ["TELEGRAM_ALERT_ON_SCAN"] = "false"
+    if _truthy_env("TELEGRAM_INTRADAY_YAHOO_FIRST", default=True):
+        os.environ["INTRADAY_YAHOO_BEFORE_POLYGON"] = "true"
     try:
         ranked, _views, summary = run_scan_market(
             tickers,
@@ -620,6 +649,13 @@ def _execute_scan_send_persist(
             os.environ.pop("TELEGRAM_ALERT_ON_SCAN", None)
         else:
             os.environ["TELEGRAM_ALERT_ON_SCAN"] = prev_alert_on_scan
+        if prev_yahoo_first is None:
+            os.environ.pop("INTRADAY_YAHOO_BEFORE_POLYGON", None)
+        else:
+            os.environ["INTRADAY_YAHOO_BEFORE_POLYGON"] = prev_yahoo_first
+
+    if _truthy_env("TELEGRAM_BABIR_MERGE_AMT_RANKED", default=True):
+        ranked = enrich_ranked_for_babir(ranked, summary)
 
     _persist_last_scan(ranked=ranked, summary=summary, universe_size=len(tickers))
 
@@ -662,17 +698,21 @@ def _execute_scan_send_persist(
     )
     _send_html(token, chat_s, body, reply_markup=kb)
 
+    # 2-xabar: har doim AMT bo‘limi (BUY + ixtiyoriy VAL yaqin kuzatuv)
     if amt_buy_alert_enabled():
-        amt_rows = summary.get("amt_buy_signals") or []
-        if isinstance(amt_rows, list) and amt_rows:
-            amt_html = build_amt_buy_alert_html(
-                [r for r in amt_rows if isinstance(r, dict)],
-                summary=summary,
-                chart_url_builder=_tradingview_url,
-            )
-            _send_html(token, chat_s, amt_html, reply_markup=kb)
+        amt_rows_raw = summary.get("amt_buy_signals") or []
+        near_raw = summary.get("amt_near_val_signals") or []
+        amt_rows = [r for r in amt_rows_raw if isinstance(r, dict)][:_amt_buy_top_n()]
+        near_rows = [r for r in near_raw if isinstance(r, dict)]
+        amt_html = build_amt_buy_alert_html(
+            amt_rows,
+            summary=summary,
+            chart_url_builder=_tradingview_url,
+            near_rows=near_rows,
+        )
+        _send_html(token, chat_s, amt_html, reply_markup=kb)
 
-    if _truthy_env("TELEGRAM_APPEND_FRAMEWORKS", default=True) and not for_auto_push:
+    if _truthy_env("TELEGRAM_APPEND_FRAMEWORKS", default=False) and not for_auto_push:
         _send_html(token, chat_s, build_telegram_framework_appendices_html(), reply_markup=kb)
 
 
@@ -988,9 +1028,19 @@ def main() -> None:
                         )
                     else:
                         msg = header + "— Hali signal yozuvi yo‘q. Avval <code>/scan</code> yuboring.\n"
-                    if _truthy_env("TELEGRAM_APPEND_FRAMEWORKS", default=True):
-                        msg += "\n" + build_telegram_framework_appendices_html()
                     _send_html(token, chat_s, msg, reply_markup=kb)
+                    if amt_buy_alert_enabled():
+                        amt_saved = blob.get("amt_buy_signals") or []
+                        near_saved = (summary.get("amt_near_val_signals") or []) if summary else []
+                        if not near_saved and isinstance(summary, dict):
+                            near_saved = summary.get("amt_near_val_signals") or []
+                        amt_html = build_amt_buy_alert_html(
+                            [r for r in amt_saved if isinstance(r, dict)][:_amt_buy_top_n()],
+                            summary=summary if isinstance(summary, dict) else None,
+                            chart_url_builder=_tradingview_url,
+                            near_rows=[r for r in near_saved if isinstance(r, dict)],
+                        )
+                        _send_html(token, chat_s, amt_html, reply_markup=kb)
                     continue
 
                 if cmd == "plan":
@@ -998,7 +1048,22 @@ def main() -> None:
                     _send_html(token, chat_s, _html_plan_from_last_scan(sym_f), reply_markup=kb)
                     continue
 
-                if cmd in {"scan", "scanall"}:
+                if cmd == "scanall":
+                    if not scan_lock.acquire(blocking=False):
+                        _send_html(
+                            token,
+                            chat_s,
+                            "Skan allaqachon ketmoqda, biroz kuting.",
+                            reply_markup=kb,
+                        )
+                        continue
+                    try:
+                        _execute_scan_send_persist(token, chat_s, run_all=True)
+                    finally:
+                        scan_lock.release()
+                    continue
+
+                if cmd == "scan":
                     if not scan_lock.acquire(blocking=False):
                         _send_html(
                             token,

@@ -25,7 +25,11 @@ from agents.strategy_factory import resolve_strategy_mode, run_stage_one_strateg
 from agents.strategy_volume_ignition import VolumeIgnitionStrategyAgent
 from agents.strategy_vwap_breakout import VwapBreakoutStrategyAgent
 from agents.telegram_alerts_agent import TelegramAlertsAgent
-from agents.telegram_amt_buy import amt_buy_alert_enabled, collect_amt_buy_signals
+from agents.telegram_amt_buy import (
+    amt_buy_alert_enabled,
+    collect_amt_buy_signals,
+    collect_amt_near_val_watch,
+)
 from agents.universe_agent import FALLBACK_US_EQUITIES, UniverseAgent
 from src.modules.halal_gate import apply_halal_gate, halal_report_to_dict
 from src.providers.zoya_client import fetch_zoya_compliance
@@ -521,6 +525,7 @@ def run_scan_market(
 
     amt_buy_signals = collect_amt_buy_signals(results)
     amt_buy_count = len([1 for sig in results.values() if bool(sig.get("amt_buy_signal"))])
+    amt_near_val_signals = collect_amt_near_val_watch(results)
 
     if os.getenv("TELEGRAM_ALERT_ON_SCAN", "").strip().lower() in {"1", "true", "yes", "on"}:
         tg = TelegramAlertsAgent()
@@ -556,6 +561,7 @@ def run_scan_market(
         "watchlist_fallback_count": watchlist_fallback_count,
         "amt_buy_count": amt_buy_count,
         "amt_buy_signals": amt_buy_signals,
+        "amt_near_val_signals": amt_near_val_signals,
         "paper_ready_signals": paper_ready_count,
         "failed_signals": scanned - len(signals),
         "symbols_input": scanned,
@@ -600,11 +606,16 @@ def telegram_default_controls() -> SidebarControls:
         preset = "Explorer"
     return SidebarControls(
         desk_label=os.getenv("TELEGRAM_DESK_LABEL", "TG scan").strip() or "TG scan",
-        # 0 = cheklovsiz (Alpaca/Polygon qaytargan barcha US tradable gacha).
-        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 0, 0, 9_999_999),
+        # Sukut 1200 ticker; 0 = cheklovsiz (Alpaca/Polygon barcha US tradable).
+        max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 1200, 50, 9_999_999),
         preset_name=preset,
         rvol_thresholds=dict(SCAN_PRESETS[preset]),
-        max_workers=_env_int_bounded("SCAN_MAX_WORKERS", 10, 2, 20),
+        max_workers=_env_int_bounded(
+            "TELEGRAM_SCAN_MAX_WORKERS",
+            _env_int_bounded("SCAN_MAX_WORKERS", 12, 2, 32),
+            2,
+            32,
+        ),
         finviz_csv_universe=os.getenv("TELEGRAM_USE_FINVIZ_CSV", "").strip().lower() in {"1", "true", "yes", "on"},
     )
 

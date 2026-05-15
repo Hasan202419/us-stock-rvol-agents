@@ -284,7 +284,7 @@ class VolumeIgnitionStrategyAgent:
         if d_pct <= 4.0:
             return "Accumulation"
         if d_pct <= 6.5:
-            return "Pre-breakout"
+            return "Breakout"
         return "Monitor"
 
     def _entry_zone(

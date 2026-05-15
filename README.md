@@ -157,6 +157,7 @@ MARKET_DATA_PROVIDER_PRIORITY=polygon,yahoo,alpaca,finnhub,alpha_vantage
 - `/scan` — oddiy skan (`TELEGRAM_MAX_SYMBOLS`; **0 = cheklovsiz**, API dagi barcha US tradable).
 - `/scanall` — keng qamrov (`TELEGRAM_MAX_SYMBOLS_ALL`; **0 = cheklovsiz**).
 - `/plan` yoki `/plan AAPL` — oxirgi skandan professional trade plan matni.
+- **Babir + AMT avtomatik**: `TELEGRAM_AUTO_PUSH_ENABLED=true` — worker fonida keng skan (`TELEGRAM_AUTO_PUSH_USE_SCANALL=true` → ko‘p ticker). Har pushda **2 xabar**: (1) Babir signallar/kuzatuv + ichida **AMT BUY · VAL↑** kartochkalari; (2) to‘liq AMT ro‘yxati. Ma’lumot: **Yahoo** (intraday birinchi) + **Polygon/Massive** (`POLYGON_API_KEY` / `MASSIVE_API_KEY`). Parallel: `TELEGRAM_SCAN_MAX_WORKERS=16` (ketma-ket emas).
 - `/status` — worker/env tez diagnostika (paper config, keylar, risk limitlar).
 - `/risk` — risk limitlarni alohida ko‘rsatadi.
 - **Deyarli barcha AQSH aksiyalari**: `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` yoki `POLYGON_API_KEY` bo‘lishi kerak (bo‘lmasa — qisqa fallback ro‘yxat). `.env` da `TELEGRAM_MAX_SYMBOLS=0` yoki `TELEGRAM_MAX_SYMBOLS_ALL=0` — API qaytargan barcha US tradable; keyin Telegramda `/scanall` (avto-pushda ham). Skan vaqti va API limitlari ticker soniga qarab keskin oshadi; `SCAN_MAX_WORKERS` ni ehtiyotkorlik bilan oshiring.
@@ -164,9 +165,29 @@ MARKET_DATA_PROVIDER_PRIORITY=polygon,yahoo,alpaca,finnhub,alpha_vantage
 
 ## Analyst trade plan + Volume Ignition
 
-- **`STRATEGY_MODE=volume_ignition`** — kunlik shamlar bo‘yicha “volume ignition” filtri: oxirgi 3 kun hajm o‘sishi, hajm ≥ 2× 20 kunlik o‘rtacha, RVOL, 3 kunlik o‘sish cheklovi, qarshilik yaqinligi, yuqori dip, EMA9/20 konteksti, ATR o‘sishi, parabolik taqiq, minimal o‘rtacha hajm. Barcha chegaralar `.env` da `IGNITION_*` prefiksi bilan ([agents/strategy_volume_ignition.py](agents/strategy_volume_ignition.py)).
+- **`STRATEGY_MODE=volume_ignition`** — kunlik shamlar bo‘yicha “volume ignition” filtri ([agents/strategy_volume_ignition.py](agents/strategy_volume_ignition.py)). Skaner quyidagi mezonlarni tekshiradi; har biri `.env` da `IGNITION_*` (yoki umumiy `MIN_*`) bilan sozlanadi:
+
+| Skaner mezoni | Env kaliti | Sukut (misol) |
+|---------------|------------|---------------|
+| Oxirgi 3 kun ketma-ket hajm o‘sishi | (kodda `volume_three_up`) | — |
+| Joriy hajm ≥ N× 20 kunlik o‘rtacha | `IGNITION_VOL_VS_20D_AVG` | `2` |
+| RVOL ≥ N | `IGNITION_MIN_RVOL` | `2` |
+| 3 kunlik narx o‘sishi ≤ N% | `IGNITION_MAX_3DAY_GAIN_PCT` | `10` |
+| Qarshilikgacha masofa ≤ N% | `IGNITION_MAX_RES_DISTANCE_PCT` | `5` |
+| Qarshilik lookback (kun) | `IGNITION_RESISTANCE_LOOKBACK` | `20` |
+| Yuqori dip (higher low) | (kodda `higher_low`) | — |
+| Narx > EMA9, EMA20 dan juda uzoq emas | `IGNITION_EMA_EXTENSION_MAX_PCT` | `8` |
+| ATR o‘sishi | (kodda `atr_rising`) | — |
+| Cho‘zilgan harakat taqiqi | `IGNITION_EXTENDED_MOVE_BAN_PCT`, `IGNITION_EXTENDED_LOOKBACK` | `20`, `20` |
+| Parabolik diapazon / 2 kun sakrash | `IGNITION_PARABOLIC_RANGE_PCT`, `IGNITION_PARABOLIC_2DAY_JUMP_PCT` | `15`, `8` |
+| Minimal o‘rtacha kunlik hajm | `IGNITION_MIN_AVG_VOLUME` | `1000000` |
+| Minimal narx (umumiy) | `MIN_PRICE` | `1` |
+| Minimal kunlik hajm (umumiy) | `MIN_VOLUME` | `200000` |
+
+`ignition_trend_stage` qiymatlari: **Accumulation** → **Ignition** → **Breakout** (qarshilik yaqinligi va hajm kontekstiga qarab).
 - **LLM professional plan**: `ANALYST_TRADE_PLAN_ENABLED=true` (sukut) — ChatGPT/DeepSeek JSON ichida `trade_plan` obyekti (company, catalyst, TA, risk, entry/stop/target, R:R, execution, summary). Matn dashboard va `analyst_trade_plan_text` maydonida; LLM o‘chiq bo‘lsa deterministik reja [agents/trade_plan_format.py](agents/trade_plan_format.py) dan to‘ldiriladi.
 - **Telegram**: `/plan` yoki `/plan AAPL` — oxirgi `/scan` natijasidan (`state/last_telegram_scan.json`) bitta ticker bo‘yicha to‘liq plan matni.
 - **Paper savdo**: [agents/risk_manager_agent.py](agents/risk_manager_agent.py) `allow_order`, qaror, SL/TP va R:R tekshiruvi — plan tavsiya; buyruq avtomatik emas.
+- **Eslatma**: LLM va skaner matnlari tahlil/tavsiya; broker buyrug‘i yoki investitsiya kafolati emas. `ANALYST_TRADE_PLAN_ENABLED=false` bilan token xarajatini kamaytirish mumkin.
 
 - Eslatma: aniq **son** limit qo‘yganingizda ro‘yxat API dan katta bo‘lsa, ba’zi yo‘llarda **alfavit bo‘yicha kesiladi**. **0** (cheklovsiz) rejimda Alpaca bitta javobda beradi; Polygon esa sahifalab to‘liq yig‘adi (Polygon tomonda max ~5000 sahifa xavfsizlik cheklovi).

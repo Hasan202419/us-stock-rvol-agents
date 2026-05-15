@@ -71,13 +71,11 @@ if (-not $DeployOnly) {
         exit 13
     }
 
-    git push -u origin $Branch 2>&1 | ForEach-Object { Write-Log "git_push: $_" }
+    Write-Log "git push via scripts/git_push_from_env.py (GITHUB_TOKEN from .env)"
+    python (Join-Path $RepoRoot "scripts\git_push_from_env.py") --branch $Branch 2>&1 | ForEach-Object { Write-Log "git_push: $_" }
     if ($LASTEXITCODE -ne 0) {
         Write-Log "ERROR: git push muvaffaqiyatsiz (exit=$LASTEXITCODE)"
-        Write-Log "Agar 'Repository not found' bo'lsa: remote URL noto'g'ri yoki GitHubda repo yo'q / kalit yo'q."
-        Write-Log "  git remote -v"
-        Write-Log "  git remote set-url origin https://github.com/<user>/<repo>.git"
-        Write-Log "HTTPS push uchun: Git Credential Manager yoki PAT (repo scope)."
+        Write-Log ".env da GITHUB_TOKEN=ghp_... (repo scope) — https://github.com/settings/tokens"
         exit 14
     }
 }
