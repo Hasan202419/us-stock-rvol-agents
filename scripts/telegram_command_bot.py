@@ -349,6 +349,11 @@ def _signal_status_badge(row: Dict[str, Any]) -> str:
         return "🟢 AMT BUY"
     if row.get("babir_amt_near"):
         return "🟡 AMT VAL"
+    regime = str(row.get("market_regime") or "").upper()
+    if regime == "NEWS_LOCK":
+        return "⛔ NEWS_LOCK"
+    if regime == "RISK_OFF":
+        return "🔴 RISK_OFF"
     if row.get("watchlist_only"):
         return "🟡 KUZATUV"
     if bool(row.get("paper_trade_ready")):
@@ -457,6 +462,12 @@ def _build_scan_result_html(
         amt_n = int(summary.get("amt_buy_count") or 0)
         if amt_n:
             stats += f" · AMT BUY: {amt_n}"
+        regime = str(summary.get("market_regime") or "").strip()
+        if regime:
+            stats += f" · Market: <b>{_escape_html(regime)}</b>"
+        shield_line = str(summary.get("market_shield_summary_line") or "").strip()
+        if shield_line:
+            lines.append(f"<i>{_escape_html(shield_line)}</i>\n")
         lines.append(stats + "\n")
     lines.append(_format_market_clock_footer())
 

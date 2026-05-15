@@ -188,6 +188,7 @@ MARKET_DATA_PROVIDER_PRIORITY=polygon,yahoo,alpaca,finnhub,alpha_vantage
 - **LLM professional plan**: `ANALYST_TRADE_PLAN_ENABLED=true` (sukut) — ChatGPT/DeepSeek JSON ichida `trade_plan` obyekti (company, catalyst, TA, risk, entry/stop/target, R:R, execution, summary). Matn dashboard va `analyst_trade_plan_text` maydonida; LLM o‘chiq bo‘lsa deterministik reja [agents/trade_plan_format.py](agents/trade_plan_format.py) dan to‘ldiriladi.
 - **Telegram**: `/plan` yoki `/plan AAPL` — oxirgi `/scan` natijasidan (`state/last_telegram_scan.json`) bitta ticker bo‘yicha to‘liq plan matni.
 - **Paper savdo**: [agents/risk_manager_agent.py](agents/risk_manager_agent.py) `allow_order`, qaror, SL/TP va R:R tekshiruvi — plan tavsiya; buyruq avtomatik emas.
+- **Market Shield** ([agents/market_shield.py](agents/market_shield.py)): har skan oldidan SPY/QQQ/VIX → `BULL` / `NEUTRAL` / `RISK_OFF` / `NEWS_LOCK`; long BUY va paper faqat regime ruxsat berganda. TradingView referens: [pine/market_shield_filter.pine](pine/market_shield_filter.pine).
 - **Eslatma**: LLM va skaner matnlari tahlil/tavsiya; broker buyrug‘i yoki investitsiya kafolati emas. `ANALYST_TRADE_PLAN_ENABLED=false` bilan token xarajatini kamaytirish mumkin.
 
 - Eslatma: aniq **son** limit qo‘yganingizda ro‘yxat API dan katta bo‘lsa, ba’zi yo‘llarda **alfavit bo‘yicha kesiladi**. **0** (cheklovsiz) rejimda Alpaca bitta javobda beradi; Polygon esa sahifalab to‘liq yig‘adi (Polygon tomonda max ~5000 sahifa xavfsizlik cheklovi).

@@ -1,0 +1,48 @@
+//@version=5
+// Market Shield — SPY / QQQ / VIX filter for long-only setups (reference; bot: agents/market_shield.py)
+
+indicator("Market Shield (SPY QQQ VIX)", overlay=false)
+
+useMarketShield = input.bool(true, "Use Market Shield")
+
+spySymbol = input.symbol("AMEX:SPY", "SPY")
+qqqSymbol = input.symbol("NASDAQ:QQQ", "QQQ")
+vixSymbol = input.symbol("CBOE:VIX", "VIX")
+
+marketTf = input.timeframe("5", "Market TF")
+
+spyClose = request.security(spySymbol, marketTf, close)
+spyVwap  = request.security(spySymbol, marketTf, ta.vwap(hlc3))
+spyEma20 = request.security(spySymbol, marketTf, ta.ema(close, 20))
+spyDayOpen = request.security(spySymbol, "D", open)
+
+qqqClose = request.security(qqqSymbol, marketTf, close)
+qqqVwap  = request.security(qqqSymbol, marketTf, ta.vwap(hlc3))
+qqqEma20 = request.security(qqqSymbol, marketTf, ta.ema(close, 20))
+qqqDayOpen = request.security(qqqSymbol, "D", open)
+
+vixClose = request.security(vixSymbol, marketTf, close)
+vixEma9  = request.security(vixSymbol, marketTf, ta.ema(close, 9))
+vixDayOpen = request.security(vixSymbol, "D", open)
+
+spyDayPct = spyDayOpen > 0 ? ((spyClose - spyDayOpen) / spyDayOpen) * 100 : 0
+qqqDayPct = qqqDayOpen > 0 ? ((qqqClose - qqqDayOpen) / qqqDayOpen) * 100 : 0
+vixDayPct = vixDayOpen > 0 ? ((vixClose - vixDayOpen) / vixDayOpen) * 100 : 0
+
+spyBull = spyClose > spyVwap and spyClose > spyEma20
+qqqBull = qqqClose > qqqVwap and qqqClose > qqqEma20
+vixCalm = vixClose <= vixEma9
+
+bullMarket = spyBull and qqqBull and vixCalm
+neutralMarket = (spyBull or qqqBull) and vixDayPct < 8
+riskOffMarket = (not spyBull or not qqqBull) and vixClose > vixEma9
+newsLock = spyDayPct <= -1.0 or qqqDayPct <= -1.2 or vixDayPct >= 10 or vixClose >= 25
+
+marketOkForLong = not useMarketShield or (bullMarket and not newsLock)
+marketWatchOnly = useMarketShield and neutralMarket and not newsLock
+marketBlocked = useMarketShield and (riskOffMarket or newsLock)
+
+bgcolor(marketBlocked ? color.new(color.red, 85) : marketOkForLong ? color.new(color.green, 90) : color.new(color.orange, 90))
+
+plotchar(marketOkForLong, "BULL OK", "▲", location.bottom, color.green, size=size.tiny)
+plotchar(marketBlocked, "BLOCKED", "■", location.top, color.red, size=size.tiny)

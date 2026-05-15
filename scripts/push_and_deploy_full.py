@@ -31,7 +31,15 @@ def main() -> int:
 
     if not args.skip_tests:
         rc = _run(
-            [py, "-m", "pytest", "tests/test_telegram_amt_buy.py", "tests/test_amt_vwap_scalp.py", "-q"],
+            [
+                py,
+                "-m",
+                "pytest",
+                "tests/test_market_shield.py",
+                "tests/test_telegram_amt_buy.py",
+                "tests/test_amt_vwap_scalp.py",
+                "-q",
+            ],
             cwd=root,
             label="pytest",
         )

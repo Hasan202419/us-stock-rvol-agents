@@ -30,6 +30,11 @@ from agents.telegram_amt_buy import (
     collect_amt_buy_signals,
     collect_amt_near_val_watch,
 )
+from agents.market_shield import (
+    apply_market_shield_to_signal,
+    build_market_shield_snapshot,
+    market_shield_blocks_paper,
+)
 from agents.universe_agent import FALLBACK_US_EQUITIES, UniverseAgent
 from src.modules.halal_gate import apply_halal_gate, halal_report_to_dict
 from src.providers.zoya_client import fetch_zoya_compliance
@@ -193,15 +198,19 @@ def _apply_analyst_fields(
     paper_trade_ready = False
     paper_trade_block_reason = ""
 
+    shield_block, shield_reason = market_shield_blocks_paper(signal)
     if strategy_passed:
         paper_trade_ready = bool(
             analyst_view.get("allow_order")
             and analyst_view.get("decision") in {"WATCH", "STRONG_WATCH"}
             and not hard_flags
             and not paper_block
+            and not shield_block
         )
         if not paper_trade_ready:
-            if paper_block:
+            if shield_block:
+                paper_trade_block_reason = shield_reason
+            elif paper_block:
                 paper_trade_block_reason = f"PAPER readiness blocked: {paper_block}"
             elif hard_flags:
                 paper_trade_block_reason = f"Hard AI risk_flags: {'; '.join(hard_flags)}"
@@ -241,6 +250,8 @@ def _apply_analyst_fields(
             "paper_ready_blocked_field": analyst_view.get("paper_ready_blocked"),
             "paper_trade_ready": paper_trade_ready,
             "paper_trade_block_reason": paper_trade_block_reason,
+            "market_regime": signal.get("market_regime"),
+            "market_shield_block_reason": signal.get("market_shield_block_reason"),
             "indicator_lineage_json": json.dumps(lineage, default=str),
         }
     )
@@ -282,6 +293,7 @@ def run_scan_market(
     """
 
     agents = build_scan_agents(repo_root)
+    market_shield = build_market_shield_snapshot(agents["market_data"])
     signals: List[Dict[str, Any]] = []
     full_scan_logs: List[Dict[str, Any]] = []
     full_scan_views: List[Dict[str, Any]] = []
@@ -310,6 +322,7 @@ def run_scan_market(
             signal = _maybe_attach_mtf_snapshot(agents["market_data"], symbol, signal)
             signal = _maybe_attach_amt_snapshot(agents["market_data"], symbol, signal)
             signal = _maybe_attach_scalp_daytrade_levels(signal)
+            signal = apply_market_shield_to_signal(signal, market_shield)
             return symbol, signal
         except Exception:
             fallback = {
@@ -462,6 +475,7 @@ def run_scan_market(
                 "Ign R dist%": signal.get("ignition_distance_to_resistance_pct"),
                 "MTF": signal.get("mtf_summary_line") or "—",
                 "AMT": signal.get("amt_summary_line") or "—",
+                "Market": signal.get("market_regime") or "—",
                 "Kirish/SL/TP": signal.get("trade_levels_line") or "—",
                 "ChatGPT Decision": analyst_decision or "—",
                 "Trade plan": (
@@ -557,6 +571,9 @@ def run_scan_market(
 
     summary = {
         "tickers_scanned": scanned,
+        "market_regime": market_shield.get("market_regime"),
+        "market_shield_summary_line": market_shield.get("market_shield_summary_line"),
+        "market_shield": market_shield,
         "eligible_signals": len(signals),
         "watchlist_fallback_count": watchlist_fallback_count,
         "amt_buy_count": amt_buy_count,

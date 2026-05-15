@@ -16,7 +16,10 @@ ANALYST_LLM_SYSTEM_APPENDIX = (
     "Volume ignition skaneri: RVOL, hajm zanjiri, 3 kunlik o‘sish cheklovi, qarshilik yaqinligi, "
     "parabolikdan qochish, suyuqlik (avg vol). "
     "HASAN-style: long-only, paper, NYSE/NASDAQ/AMEX likvid; BUY faqat gate+skor kuchli; WATCH marginal; AVOID zaif; "
-    "majburiy savdo yo‘q. Fakt: faqat signal JSON + yangiliklar."
+    "majburiy savdo yo‘q. "
+    "MARKET SHIELD: SPY/QQQ/VIX — BULL (SPY+QQQ VWAP/EMA20, VIX tinch) normal long; "
+    "NEUTRAL faqat kuchli setup skor 80+; RISK_OFF BUY yo‘q; NEWS_LOCK (SPY<=-1%, VIX>=+10% yoki VIX>=25) hammasi REJECT; "
+    "high beta + qizil bozor = risk 50% kam; beta>=2 + VIX rising = BUY blok. Fakt: faqat signal JSON + yangiliklar."
 )
 
 

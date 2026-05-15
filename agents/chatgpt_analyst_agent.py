@@ -122,6 +122,15 @@ class ChatGPTAnalystAgent:
                 "amt_poc_proxy": signal.get("amt_poc_proxy"),
                 "amt_vah": signal.get("amt_vah"),
                 "amt_val": signal.get("amt_val"),
+                "market_regime": signal.get("market_regime"),
+                "market_shield_summary_line": signal.get("market_shield_summary_line"),
+                "market_shield_buy_blocked": signal.get("market_shield_buy_blocked"),
+                "market_shield_block_reason": signal.get("market_shield_block_reason"),
+            },
+            "market_shield": {
+                "regime": signal.get("market_regime"),
+                "summary": signal.get("market_shield_summary_line"),
+                "buy_blocked": signal.get("market_shield_buy_blocked"),
             },
             "recent_news": news,
             "schema_v2": {
@@ -185,7 +194,10 @@ class ChatGPTAnalystAgent:
                                 "If reckless, populate risk_flags_hard with short uppercase codes. "
                                 "Always include allow_order explicitly. "
                                 "Set allow_order=true only when the setup is WATCH/STRONG_WATCH, has no hard blockers, "
-                                "and is acceptable for paper-trade consideration."
+                                "and is acceptable for paper-trade consideration. "
+                                "Respect market_regime: NEWS_LOCK or market_shield_buy_blocked → AVOID, allow_order=false. "
+                                "RISK_OFF → WATCH only unless strong relative strength. "
+                                "NEUTRAL → only high-quality setups; BULL → normal long rules."
                                 + trade_plan_block
                                 + (" " + ANALYST_LLM_SYSTEM_APPENDIX if framework_append else "")
                             ),

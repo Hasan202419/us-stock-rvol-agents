@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 
 from agents.kill_switch import is_kill_switch_active
+from agents.market_shield import market_shield_blocks_paper
 
 
 class RiskManagerAgent:
@@ -55,6 +56,10 @@ class RiskManagerAgent:
         """Approve only validated paper setups."""
         if is_kill_switch_active():
             return False, "Kill switch is active — no new trades."
+
+        shield_block, shield_reason = market_shield_blocks_paper(signal)
+        if shield_block:
+            return False, shield_reason
 
         if not analyst_view.get("allow_order", False):
             decision = str(analyst_view.get("decision") or "—").upper()
