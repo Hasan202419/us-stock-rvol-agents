@@ -25,6 +25,7 @@ from agents.strategy_factory import resolve_strategy_mode, run_stage_one_strateg
 from agents.strategy_volume_ignition import VolumeIgnitionStrategyAgent
 from agents.strategy_vwap_breakout import VwapBreakoutStrategyAgent
 from agents.telegram_alerts_agent import TelegramAlertsAgent
+from agents.telegram_amt_buy import amt_buy_alert_enabled, collect_amt_buy_signals
 from agents.universe_agent import FALLBACK_US_EQUITIES, UniverseAgent
 from src.modules.halal_gate import apply_halal_gate, halal_report_to_dict
 from src.providers.zoya_client import fetch_zoya_compliance
@@ -518,6 +519,9 @@ def run_scan_market(
     watchlist_fallback_count = sum(1 for item in ranked_signals if item.get("watchlist_only"))
     paper_ready_count = sum(1 for item in signals if item.get("paper_trade_ready"))
 
+    amt_buy_signals = collect_amt_buy_signals(results)
+    amt_buy_count = len([1 for sig in results.values() if bool(sig.get("amt_buy_signal"))])
+
     if os.getenv("TELEGRAM_ALERT_ON_SCAN", "").strip().lower() in {"1", "true", "yes", "on"}:
         tg = TelegramAlertsAgent()
         tg.notify_scan_summary(
@@ -529,6 +533,8 @@ def run_scan_market(
             }
         )
         tg.notify_signals(ranked_signals, max_items=_env_int_bounded("TELEGRAM_ALERT_TOP_N", 3, 1, 50))
+        if amt_buy_alert_enabled() and amt_buy_signals:
+            tg.notify_amt_buy_signals(amt_buy_signals, summary={"tickers_scanned": scanned, "amt_buy_count": amt_buy_count})
 
     mail_on = os.getenv("EMAIL_ALERT_ON_SCAN", "").strip().lower() in {"1", "true", "yes", "on"}
     mail_en = os.getenv("EMAIL_ALERTS_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -548,6 +554,8 @@ def run_scan_market(
         "tickers_scanned": scanned,
         "eligible_signals": len(signals),
         "watchlist_fallback_count": watchlist_fallback_count,
+        "amt_buy_count": amt_buy_count,
+        "amt_buy_signals": amt_buy_signals,
         "paper_ready_signals": paper_ready_count,
         "failed_signals": scanned - len(signals),
         "symbols_input": scanned,

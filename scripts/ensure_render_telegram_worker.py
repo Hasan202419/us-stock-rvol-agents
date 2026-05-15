@@ -284,6 +284,8 @@ def _build_add_env() -> list[dict[str, str]]:
         "TELEGRAM_AUTO_PUSH_USE_SCANALL": "true",
         "TELEGRAM_AUTO_PUSH_PASS_ONLY": "false",
         "TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST": "true",
+        "TELEGRAM_AMT_BUY_ALERT_SEPARATE": "true",
+        "TELEGRAM_AMT_BUY_TOP_N": "12",
         "SCAN_SHOW_WATCHLIST_ON_EMPTY": "true",
         "SCAN_EMPTY_WATCHLIST_TOP_N": "10",
         "TELEGRAM_BOT_REPLY_TOP_N": "10",

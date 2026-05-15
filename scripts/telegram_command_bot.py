@@ -34,6 +34,11 @@ from agents.scan_presets import SCAN_PRESETS  # noqa: E402
 from agents.session_calendar import NY_TZ, is_weekday_et, ny_session_bounds_for_date  # noqa: E402
 from agents.telegram_framework_html import build_telegram_framework_appendices_html  # noqa: E402
 from agents.trade_plan_format import deterministic_trade_plan_from_signal  # noqa: E402
+from agents.telegram_amt_buy import (  # noqa: E402
+    amt_buy_alert_enabled,
+    build_amt_buy_alert_html,
+    format_amt_buy_line,
+)
 from agents.simple_backtest_mvp import (  # noqa: E402
     daily_closes_yfinance,
     sma_crossover_long_only_backtest,
@@ -338,6 +343,8 @@ def _partition_ranked(ranked: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]
 
 
 def _signal_status_badge(row: Dict[str, Any]) -> str:
+    if bool(row.get("amt_buy_signal")):
+        return "🟢 AMT BUY"
     if row.get("watchlist_only"):
         return "🟡 KUZATUV"
     if bool(row.get("paper_trade_ready")):
@@ -439,8 +446,23 @@ def _build_scan_result_html(
         )
         if wl_n:
             stats += f" · kuzatuv: {wl_n}"
+        amt_n = int(summary.get("amt_buy_count") or 0)
+        if amt_n:
+            stats += f" · AMT BUY: {amt_n}"
         lines.append(stats + "\n")
     lines.append(_format_market_clock_footer())
+
+    if not amt_buy_alert_enabled():
+        amt_rows = summary.get("amt_buy_signals") or []
+        if isinstance(amt_rows, list) and amt_rows:
+            show_amt = [r for r in amt_rows if isinstance(r, dict) and r.get("amt_buy_signal")][:top_n]
+            if show_amt:
+                lines.append(f"<b>AMT Volume Profile BUY ({len(show_amt)})</b>\n")
+                for r in show_amt:
+                    lines.append(
+                        format_amt_buy_line(r, chart_url=_tradingview_url(str(r.get("ticker", ""))))
+                        + "\n\n"
+                    )
 
     if passes:
         lines.append(f"<b>Signallar ({min(len(passes), top_n)})</b>\n")
@@ -489,11 +511,15 @@ def _persist_last_scan(
     state_dir = PROJECT_DIR / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     top_n = _env_int_bounded("TELEGRAM_BOT_TOP_ROWS", 6, 1, 500)
+    amt_persist = summary.get("amt_buy_signals") or []
+    if not isinstance(amt_persist, list):
+        amt_persist = []
     payload = {
         "saved_at_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "universe_size": universe_size,
         "summary": summary,
         "top_signals": ranked[:top_n],
+        "amt_buy_signals": amt_persist[:top_n],
     }
     path = state_dir / "last_telegram_scan.json"
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
@@ -635,6 +661,17 @@ def _execute_scan_send_persist(
         heading=scan_heading,
     )
     _send_html(token, chat_s, body, reply_markup=kb)
+
+    if amt_buy_alert_enabled():
+        amt_rows = summary.get("amt_buy_signals") or []
+        if isinstance(amt_rows, list) and amt_rows:
+            amt_html = build_amt_buy_alert_html(
+                [r for r in amt_rows if isinstance(r, dict)],
+                summary=summary,
+                chart_url_builder=_tradingview_url,
+            )
+            _send_html(token, chat_s, amt_html, reply_markup=kb)
+
     if _truthy_env("TELEGRAM_APPEND_FRAMEWORKS", default=True) and not for_auto_push:
         _send_html(token, chat_s, build_telegram_framework_appendices_html(), reply_markup=kb)
 
@@ -741,7 +778,9 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /paper — hozircha stub (Alpaca paper keyin ulanadi)
 /backtest [TICKER] — oddiy SMA crossover MVP (yahoo kunlik; misol: <code>/backtest AAPL</code>)
 <i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
-<i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY; <code>AMT_RANK_BUY_FIRST=true</code> — Topda BUY yuqoriga.
+<i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY (Pine: AMT Scalping &amp; Volume Profile).
+<code>TELEGRAM_AMT_BUY_ALERT_SEPARATE=true</code> (sukut) — AMT BUY alohida Telegram xabari.
+<code>AMT_RANK_BUY_FIRST=true</code> — Topda BUY yuqoriga.
 
 <i>Ma’lumot:</i> narh/volume va intraday barlar odatda Alpaca → Polygon → Yahoo (yfinance,
 kalit shart emas) tartibida tortiladi; Polygon cheklovi bo‘lsa
