@@ -360,7 +360,16 @@ class MarketDataAgent:
         return self._intraday_via_yahoo(symbol=ticker, timeframe_minutes=timeframe_minutes, window_days=window_days)
 
     def _alpaca_timeframe_slug(self, minutes: int) -> str | None:
-        timeframe_map = {1: "1Min", 2: "2Min", 3: "3Min", 5: "5Min", 15: "15Min", 30: "30Min", 60: "1Hour"}
+        timeframe_map = {
+            1: "1Min",
+            2: "2Min",
+            3: "3Min",
+            5: "5Min",
+            10: "10Min",
+            15: "15Min",
+            30: "30Min",
+            60: "1Hour",
+        }
         return timeframe_map.get(minutes)
 
     def _parse_iso8601_timestamp(self, raw_timestamp: str) -> int:
@@ -523,6 +532,7 @@ class MarketDataAgent:
             2: "2m",
             3: "3m",
             5: "5m",
+            10: "10m",
             15: "15m",
             30: "30m",
             60: "60m",

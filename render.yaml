@@ -125,10 +125,6 @@ services:
         sync: false
       - key: TELEGRAM_ALLOWED_CHAT_IDS
         sync: false
-      - key: TELEGRAM_BOT_TOP_ROWS
-        sync: false
-      - key: TELEGRAM_BOT_REPLY_TOP_N
-        sync: false
       - key: TELEGRAM_APPEND_FRAMEWORKS
         value: "true"
       - key: LLM_ANALYST_FRAMEWORK_APPEND

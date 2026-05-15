@@ -33,6 +33,7 @@ from agents.scan_pipeline import (  # noqa: E402
 from agents.scan_presets import SCAN_PRESETS  # noqa: E402
 from agents.session_calendar import NY_TZ, is_weekday_et, ny_session_bounds_for_date  # noqa: E402
 from agents.telegram_framework_html import build_telegram_framework_appendices_html  # noqa: E402
+from agents.trade_plan_format import deterministic_trade_plan_from_signal  # noqa: E402
 from agents.simple_backtest_mvp import (  # noqa: E402
     daily_closes_yfinance,
     sma_crossover_long_only_backtest,
@@ -108,6 +109,41 @@ def _delete_webhook_for_long_poll(token: str) -> None:
         print(f"telegram_command_bot: deleteWebhook xato: {exc}", flush=True)
 
 
+def _register_bot_menu_commands(token: str) -> None:
+    """Telegram `/` menyusidagi buyruqlar ro‘yxati (setMyCommands)."""
+
+    if _truthy_env("TELEGRAM_SKIP_SET_MY_COMMANDS", default=False):
+        print("telegram_command_bot: setMyCommands o‘tkazib yuborildi (TELEGRAM_SKIP_SET_MY_COMMANDS).", flush=True)
+        return
+    # Telegram: command 3–32, a-z 0-9 _ ; description ≤256
+    commands: List[Dict[str, str]] = [
+        {"command": "start", "description": "Yordam va bot haqida"},
+        {"command": "help", "description": "Barcha buyruqlar (HTML yordam)"},
+        {"command": "scan", "description": "US skan (dashboard bilan bir xil)"},
+        {"command": "scanall", "description": "Keng qamrovli skan (/scanall)"},
+        {"command": "signals", "description": "Oxirgi /scan qisqa natijasi"},
+        {"command": "plan", "description": "Trade plan: /plan yoki /plan AAPL"},
+        {"command": "tv", "description": "TradingView: /tv AAPL"},
+        {"command": "chart", "description": "TradingView (tv bilan bir xil)"},
+        {"command": "status", "description": "Bot, Alpaca, avto-push holati"},
+        {"command": "risk", "description": "Paper risk limitlari"},
+        {"command": "paper", "description": "Alpaca paper (keyingi fazada)"},
+        {"command": "backtest", "description": "Kunlik SMA backtest: /backtest TSLA"},
+    ]
+    try:
+        r = requests.post(
+            f"{TG_API}/bot{token}/setMyCommands",
+            json={"commands": commands},
+            timeout=30,
+        )
+        if r.ok and (r.json() or {}).get("ok"):
+            print("telegram_command_bot: setMyCommands OK (Telegram / menyusi yangilandi)", flush=True)
+            return
+        print(f"telegram_command_bot: setMyCommands xato: {r.status_code} {r.text[:400]}", flush=True)
+    except requests.RequestException as exc:
+        print(f"telegram_command_bot: setMyCommands so‘rov xatosi: {exc}", flush=True)
+
+
 def _command_from_text(text: str) -> tuple[str, str]:
     """Return (cmd_lower, remainder). Supports /scan@BotName."""
 
@@ -150,6 +186,11 @@ def _html_plan_from_last_scan(ticker_filter: str) -> str:
     body = (str(r.get("analyst_trade_plan_text") or "").strip()) or (
         str(r.get("ignition_professional_outline") or "").strip()
     )
+    if not body:
+        body = deterministic_trade_plan_from_signal(
+            r,
+            lang=os.getenv("ANALYST_TRADE_PLAN_LANG", "uz"),
+        )
     if not body:
         return f"<b>Plan</b> <code>{sym}</code> — matn yo‘q."
     return f"<b>Trade plan · {sym}</b>\n<pre>{_escape_html(body)}</pre>"
@@ -264,24 +305,33 @@ def _format_signal_line(row: Dict[str, Any]) -> str:
         f"<a href=\"{tv}\">TradingView</a>"
     )
     detail_bits: list[str] = []
+    levels_line = str(row.get("trade_levels_line") or "").strip()
+    if levels_line and bool(row.get("trade_levels_ok")):
+        style = str(row.get("trade_setup_style") or "").strip()
+        tag = "⚡" if style.startswith("scalp") else "📊"
+        detail_bits.append(f"<b>{tag} {_escape_html(levels_line)}</b>")
+        exit_rule = str(row.get("trade_exit_rule") or "").strip()
+        if exit_rule and len(exit_rule) <= 120:
+            detail_bits.append(_escape_html(exit_rule))
     price = row.get("price")
-    if price is not None:
+    if price is not None and not levels_line:
         try:
             detail_bits.append(f"narx≈{_escape_html(round(float(price), 4))}")
         except (TypeError, ValueError):
             pass
-    sl = row.get("stop_suggestion")
-    if sl is not None:
-        try:
-            detail_bits.append(f"SL≈{_escape_html(round(float(sl), 4))}")
-        except (TypeError, ValueError):
-            pass
-    tp = row.get("take_profit_suggestion")
-    if tp is not None:
-        try:
-            detail_bits.append(f"TP/chiqish≈{_escape_html(round(float(tp), 4))}")
-        except (TypeError, ValueError):
-            pass
+    if not levels_line:
+        sl = row.get("stop_suggestion")
+        if sl is not None:
+            try:
+                detail_bits.append(f"SL≈{_escape_html(round(float(sl), 4))}")
+            except (TypeError, ValueError):
+                pass
+        tp = row.get("take_profit_suggestion")
+        if tp is not None:
+            try:
+                detail_bits.append(f"TP/chiqish≈{_escape_html(round(float(tp), 4))}")
+            except (TypeError, ValueError):
+                pass
     entry_txt = str(row.get("chatgpt_entry_condition") or "").strip()
     if entry_txt:
         if len(entry_txt) > 140:
@@ -313,6 +363,17 @@ def _format_signal_line(row: Dict[str, Any]) -> str:
         lines_out.append("   └ " + " · ".join(detail_bits))
     if ign_bits:
         lines_out.append("   └ " + " · ".join(ign_bits))
+    mtf = str(row.get("mtf_summary_line") or "").strip()
+    if mtf:
+        if len(mtf) > 160:
+            mtf = mtf[:157] + "…"
+        lines_out.append(f"   └ {_escape_html(mtf)}")
+    amt_s = str(row.get("amt_summary_line") or "").strip()
+    if amt_s:
+        if len(amt_s) > 150:
+            amt_s = amt_s[:147] + "…"
+        prefix = "🟢 " if bool(row.get("amt_buy_signal")) else ""
+        lines_out.append(f"   └ {prefix}{_escape_html(amt_s)}")
     return "\n".join(lines_out)
 
 
@@ -338,7 +399,7 @@ def _persist_last_scan(
 ) -> None:
     state_dir = PROJECT_DIR / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    top_n = _env_int_bounded("TELEGRAM_BOT_TOP_ROWS", 6, 5, 80)
+    top_n = _env_int_bounded("TELEGRAM_BOT_TOP_ROWS", 6, 1, 500)
     payload = {
         "saved_at_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "universe_size": universe_size,
@@ -357,7 +418,7 @@ def _truthy_env(name: str, *, default: bool = False) -> bool:
 
 
 def _telegram_reply_top_n() -> int:
-    return _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 6, 3, 40)
+    return _env_int_bounded("TELEGRAM_BOT_REPLY_TOP_N", 6, 1, 500)
 
 
 def _resolve_auto_push_chat_id(allowed: Optional[set[str]]) -> Optional[str]:
@@ -559,9 +620,10 @@ _help_text = """<b>Mavjud buyruqlar</b>
 /scanall — kattaroq qamrov (TELEGRAM_MAX_SYMBOLS_ALL dan oladi)
 /plan [TICKER] — oxirgi /scan dan professional trade plan (bo‘sh TICKER = birinchi top)
 /signals — oxirgi /scan ning qisqa natijasi (agar saqlangan bo‘lsa; worker restart/deploydan keyin yo‘qolishi mumkin)
-<i>Telegram:</i> <code>TELEGRAM_BOT_REPLY_TOP_N</code> (3…40, sukut 6) — skan/signalsda ko‘rinadigan top qatorlar; 
-<code>TELEGRAM_BOT_TOP_ROWS</code> (5…80) — <code>last_telegram_scan.json</code> ga saqlanadigan maks. qatorlar. 
+<i>Telegram (ixtiyoriy .env):</i> <code>TELEGRAM_BOT_REPLY_TOP_N</code> (1…500, sukut 6) — skan/signals “Top”; 
+<code>TELEGRAM_BOT_TOP_ROWS</code> (1…500) — <code>last_telegram_scan.json</code>. Render blueprintda majburiy qator yo‘q. 
 <code>TELEGRAM_APPEND_FRAMEWORKS</code> (sukut yoqilgan) — xabar oxirida yig‘iladigan analyst / ignition / HASAN qo‘llanmalari.
+<i>Menyu:</i> bot ishga tushganda <code>setMyCommands</code> chaqiriladi — chatda <code>/</code> bosganda buyruqlar chiqadi. O‘chirish: <code>TELEGRAM_SKIP_SET_MY_COMMANDS=true</code>.
 <i>LLM:</i> <code>LLM_ANALYST_FRAMEWORK_APPEND</code> (sukut yoqilgan) — ChatGPT/DeepSeek system promptiga xuddi shu tuzilma qisqacha qo‘shiladi.
 <i>Avtomatik push:</i> <code>TELEGRAM_AUTO_PUSH_ENABLED=true</code> + <code>TELEGRAM_CHAT_ID</code> — har
 <code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES</code> daqiqada (default 1440 ≈ kuniga 1 marta) yoki
@@ -572,6 +634,8 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /risk — paper risk limitlari (tez ko‘rish)
 /paper — hozircha stub (Alpaca paper keyin ulanadi)
 /backtest [TICKER] — oddiy SMA crossover MVP (yahoo kunlik; misol: <code>/backtest AAPL</code>)
+<i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
+<i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY; <code>AMT_RANK_BUY_FIRST=true</code> — Topda BUY yuqoriga.
 
 <i>Ma’lumot:</i> narh/volume va intraday barlar odatda Alpaca → Polygon → Yahoo (yfinance,
 kalit shart emas) tartibida tortiladi; Polygon cheklovi bo‘lsa
@@ -624,6 +688,8 @@ def main() -> None:
     skip_wh = os.getenv("TELEGRAM_SKIP_DELETE_WEBHOOK", "").strip().lower() in {"1", "true", "yes", "on"}
     if not skip_wh:
         _delete_webhook_for_long_poll(token)
+
+    _register_bot_menu_commands(token)
 
     scan_lock = threading.Lock()
 

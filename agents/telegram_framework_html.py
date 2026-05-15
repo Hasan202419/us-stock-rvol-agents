@@ -51,11 +51,11 @@ def build_telegram_framework_appendices_html() -> str:
 
     hasan = (
         "HASAN AI (adaptive long-only, 5m asos): rejim (BULL/NEUTRAL/BEAR/NEWS_LOCK); "
-        "skrener: likvidlik (avg vol, dollar vol), RVOL, kataliz; signal: VWAP/EMA9/EMA20 (5m mantiq; "
-        "1m/10m/1H katta TF filtrlari — mavjud bo‘lsa kunlik/intraday snapshot bilan); RSI/ADX, struktura; "
+        "skrener: likvidlik, RVOL, kataliz; signal: VWAP/EMA9/EMA20; RSI/ADX, struktura; "
+        "MTF fakt (skan JSON): `mtf_summary_line` — 1m/5m/10m/1H da oxirgi yopilish vs EMA9 (↑/↓), "
+        "`mtf_alignment_count` — nechta TF da narx EMA9 ustida; "
         "skor: hajm/trend/structure/momentum/market/catalyst; BUY ≥70 + gate OK, WATCH 60–69, REJECT gate yomon; "
-        "risk: kirish/SL/TP, R:R, hajm; chiqish: TP/SL, VWAP/EMA9 yo‘qotish, sessiya oxiri; "
-        "faqat Alpaca paper, bracket. Har signal: Ticker, Company, Regime, Setup, Score, Reason, Entry, SL, T1/T2, R:R, Size, Risk, BUY/WATCH/REJECT."
+        "risk: kirish/SL/TP, R:R; chiqish: TP/SL, VWAP/EMA9 yo‘qotish; faqat Alpaca paper, bracket."
     )
 
     return (
