@@ -23,9 +23,20 @@ TRADE_PLAN_KEYS: tuple[str, ...] = (
     "final_trade_summary",
 )
 
+# LLM / boshqa agentlar ba'zan canonical emas kalit yuboradi.
+_TRADE_PLAN_ALIASES: dict[str, str] = {
+    "entry_px": "entry_price",
+    "entry": "entry_price",
+    "stop_px": "stop_loss",
+    "sl": "stop_loss",
+    "target_px": "target_price",
+    "tp": "target_price",
+    "take_profit": "target_price",
+}
+
 
 def parse_trade_plan_dict(raw: Any) -> Dict[str, str]:
-    """`trade_plan` ba'zan JSON qatori bo'lib kelishi mumkin — `json.loads` bilan dictga aylantiramiz."""
+    """`trade_plan` JSON qatori yoki dict; alias kalitlar canonical nomlarga map qilinadi."""
     if isinstance(raw, str):
         s = raw.strip()
         if s.startswith("{"):
@@ -36,7 +47,12 @@ def parse_trade_plan_dict(raw: Any) -> Dict[str, str]:
             return parse_trade_plan_dict(parsed)
     if not isinstance(raw, dict):
         return {}
-    return {k: str(raw.get(k, "") or "").strip() for k in TRADE_PLAN_KEYS}
+
+    data: Dict[str, str] = {k: str(raw.get(k, "") or "").strip() for k in TRADE_PLAN_KEYS}
+    for alias, canon in _TRADE_PLAN_ALIASES.items():
+        if not data.get(canon) and raw.get(alias) is not None:
+            data[canon] = str(raw.get(alias) or "").strip()
+    return data
 
 
 def format_trade_plan_markdown(ticker: str, tp: Dict[str, str]) -> str:
@@ -83,12 +99,20 @@ def deterministic_trade_plan_from_signal(signal: Dict[str, Any], *, lang: str = 
 
     ticker = str(signal.get("ticker") or "?").upper()
     price = signal.get("price")
+    if bool(signal.get("trade_levels_ok")):
+        entry_px = signal.get("trade_entry_price")
+        sl = signal.get("trade_stop_loss")
+        tp = signal.get("trade_tp1")
+        tp2 = signal.get("trade_tp2")
+    else:
+        entry_px = None
+        tp2 = None
+        sl = signal.get("stop_suggestion")
+        tp = signal.get("take_profit_suggestion")
     try:
-        px = f"{float(price):.4f}" if price is not None else "—"
+        px = f"{float(entry_px if entry_px is not None else price):.4f}"
     except (TypeError, ValueError):
         px = "—"
-    sl = signal.get("stop_suggestion")
-    tp = signal.get("take_profit_suggestion")
     try:
         sl_s = f"{float(sl):.4f}" if sl is not None else "—"
     except (TypeError, ValueError):
@@ -113,23 +137,48 @@ def deterministic_trade_plan_from_signal(signal: Dict[str, Any], *, lang: str = 
     outline = str(signal.get("ignition_professional_outline") or "").strip()
 
     rr_txt = "—"
+    rr2_txt = ""
+    if signal.get("trade_rr_tp1") is not None:
+        rr_txt = f"{signal.get('trade_rr_tp1')}:1 (TP1)"
+    if signal.get("trade_rr_tp2") is not None:
+        rr2_txt = f" · TP2 R:R≈{signal.get('trade_rr_tp2')}:1"
+    if rr_txt == "—":
+        try:
+            p = float(entry_px if entry_px is not None else price)
+            s = float(sl)
+            t = float(tp)
+            if p > s > 0 and t > p:
+                rr_txt = f"{(t - p) / (p - s):.2f}:1 (approx. to target vs stop)"
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+    trade_note = str(signal.get("trade_entry_note") or "").strip()
+    trade_exit = str(signal.get("trade_exit_rule") or "").strip()
+    levels_line = str(signal.get("trade_levels_line") or "").strip()
     try:
-        p = float(price)
-        s = float(sl)
-        t = float(tp)
-        if p > s > 0 and t > p:
-            rr_txt = f"{(t - p) / (p - s):.2f}:1 (approx. to target vs stop)"
-    except (TypeError, ValueError, ZeroDivisionError):
-        pass
+        tp2_s = f"{float(tp2):.4f}" if tp2 is not None else ""
+    except (TypeError, ValueError):
+        tp2_s = ""
 
     if lang.lower().startswith("uz"):
+        setup_block = ""
+        if levels_line:
+            setup_block = f"**Skalp / day trade (avtomatik)**\n{levels_line}\n"
+            if trade_note:
+                setup_block += f"Kirish: {trade_note}\n"
+            if trade_exit:
+                setup_block += f"{trade_exit}\n"
+            if tp2_s:
+                setup_block += f"Chiqish2 (kuchli zona): {tp2_s}\n"
+            setup_block += "\n"
         body = (
             f"**Ticker**\n{ticker}\n\n"
-            f"**Narx**\n{px}\n\n"
+            f"**Narx / kirish**\n{px}\n\n"
+            f"{setup_block}"
             f"**Strategiya**\n{strat or '—'}\n\n"
             f"**RVOL**\n{rv}\n\n"
-            f"**Kirish (shart)**\n{entry_c or reason or '—'}\n\n"
-            f"**SL / TP**\nSL: {sl_s} · TP: {tp_s} · R:R ≈ {rr_txt}\n\n"
+            f"**Kirish (shart)**\n{entry_c or trade_note or reason or '—'}\n\n"
+            f"**SL / TP**\nSL: {sl_s} · TP1: {tp_s} · R:R ≈ {rr_txt}{rr2_txt}\n\n"
         )
         if vol_pat:
             body += f"**Hajm**\n{vol_pat}\n\n"
@@ -141,8 +190,17 @@ def deterministic_trade_plan_from_signal(signal: Dict[str, Any], *, lang: str = 
             body += f"**6 bo‘lim (skaner)**\n{outline}"
         return body.strip()
 
+    setup_en = ""
+    if levels_line:
+        setup_en = (
+            f"**Scalp / day trade (auto)**\n{levels_line}\n"
+            f"{(trade_note + chr(10)) if trade_note else ''}"
+            f"{(trade_exit + chr(10)) if trade_exit else ''}"
+            f"{('TP2: ' + tp2_s + chr(10)) if tp2_s else ''}\n"
+        )
     body = (
         f"**Ticker**\n{ticker}\n\n"
+        f"{setup_en}"
         f"**Company**\n— (add manually or enable LLM with Finnhub for context)\n\n"
         f"**Reason (Catalyst)**\n{reason or 'Scan-based setup; verify catalysts independently.'}\n\n"
         f"**Technical setup**\n"
@@ -159,8 +217,9 @@ def deterministic_trade_plan_from_signal(signal: Dict[str, Any], *, lang: str = 
         f"\n**Entry / risk / targets**\n"
         f"- Entry condition: {entry_c or 'See strategy rules; wait for confirmation.'}\n"
         f"- Stop loss: {sl_s}\n"
-        f"- Target: {tp_s}\n"
-        f"- Risk/Reward (approx.): {rr_txt}\n"
+        f"- Target (TP1): {tp_s}\n"
+        f"{(f'- Target (TP2): {tp2_s}' + chr(10)) if tp2_s else ''}"
+        f"- Risk/Reward (approx.): {rr_txt}{rr2_txt}\n"
         f"- Position size: size from risk budget (see RiskManager / dashboard).\n\n"
         f"**Execution**\n"
         f"Wait for price/volume confirmation; set stop immediately; manage at resistance.\n"

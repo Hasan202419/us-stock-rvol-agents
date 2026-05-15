@@ -16,6 +16,27 @@ from agents.chatgpt_analyst_agent import ChatGPTAnalystAgent
 from agents.email_alerts_agent import EmailAlertsAgent
 from agents.logger_agent import LoggerAgent
 from agents.market_data_agent import MarketDataAgent
+# MTF / AMT / skalp darajalari — fayl yo‘q bo‘lsa skan sinmaydi (no-op).
+try:
+    from agents.mtf_snapshot import maybe_attach_mtf_snapshot as _maybe_attach_mtf_snapshot
+except Exception:  # noqa: BLE001
+
+    def _maybe_attach_mtf_snapshot(market_data: Any, ticker: str, signal: Dict[str, Any]) -> Dict[str, Any]:
+        return signal
+
+try:
+    from agents.amt_vwap_scalp import maybe_attach_amt_snapshot as _maybe_attach_amt_snapshot
+except Exception:  # noqa: BLE001
+
+    def _maybe_attach_amt_snapshot(market_data: Any, ticker: str, signal: Dict[str, Any]) -> Dict[str, Any]:
+        return signal
+
+try:
+    from agents.scalp_daytrade_levels import maybe_attach_scalp_daytrade_levels as _maybe_attach_scalp_daytrade_levels
+except Exception:  # noqa: BLE001
+
+    def _maybe_attach_scalp_daytrade_levels(signal: Dict[str, Any]) -> Dict[str, Any]:
+        return signal
 from agents.risk_manager_agent import RiskManagerAgent
 from agents.rvol_agent import RVOLAgent
 from agents.scan_presets import SCAN_PRESETS
@@ -258,6 +279,9 @@ def run_scan_market(
                 ignition_strategy=ignition_strategy,
             )
             signal = _apply_halal_filter_to_signal(signal)
+            signal = _maybe_attach_mtf_snapshot(agents["market_data"], symbol, signal)
+            signal = _maybe_attach_amt_snapshot(agents["market_data"], symbol, signal)
+            signal = _maybe_attach_scalp_daytrade_levels(signal)
             return symbol, signal
         except Exception:
             fallback = {
@@ -368,6 +392,14 @@ def run_scan_market(
                 "chatgpt_entry_condition": signal.get("chatgpt_entry_condition", ""),
                 "chatgpt_trade_plan_json": signal.get("chatgpt_trade_plan_json", "{}"),
                 "analyst_trade_plan_text": (str(signal.get("analyst_trade_plan_text") or "")[:4000]),
+                "ignition_distance_to_resistance_pct": signal.get("ignition_distance_to_resistance_pct"),
+                "mtf_summary_line": signal.get("mtf_summary_line"),
+                "mtf_alignment_count": signal.get("mtf_alignment_count"),
+                "mtf_snapshot_by_tf_json": json.dumps(signal.get("mtf_snapshot_by_tf") or {}, default=str),
+                "amt_buy_signal": signal.get("amt_buy_signal"),
+                "amt_summary_line": signal.get("amt_summary_line"),
+                "trade_levels_line": signal.get("trade_levels_line"),
+                "trade_setup_style": signal.get("trade_setup_style"),
                 "indicator_lineage_json": signal.get("indicator_lineage_json", ""),
                 "risk_level": risk_level_value,
                 "chatgpt_allow_order": chatgpt_allow,
@@ -400,6 +432,9 @@ def run_scan_market(
                 "SL idea": signal.get("stop_suggestion"),
                 "Ign Stage": signal.get("ignition_trend_stage"),
                 "Ign R dist%": signal.get("ignition_distance_to_resistance_pct"),
+                "MTF": signal.get("mtf_summary_line") or "—",
+                "AMT": signal.get("amt_summary_line") or "—",
+                "Kirish/SL/TP": signal.get("trade_levels_line") or "—",
                 "ChatGPT Decision": analyst_decision or "—",
                 "Trade plan": (
                     (str(signal.get("analyst_trade_plan_text") or "").strip()[:200] + "…")
@@ -419,7 +454,13 @@ def run_scan_market(
 
     agents["logger"].save_signals(signals)
     agents["logger"].save_full_scan(full_scan_logs)
-    ranked_signals = sorted(signals, key=lambda item: item.get("score", 0), reverse=True)
+    if _env_truthy_scan_default("AMT_VWAP_SCALP_ENABLED", True) and _env_truthy_scan_default("AMT_RANK_BUY_FIRST", True):
+        ranked_signals = sorted(
+            signals,
+            key=lambda item: (not bool(item.get("amt_buy_signal")), -float(item.get("score") or 0)),
+        )
+    else:
+        ranked_signals = sorted(signals, key=lambda item: item.get("score", 0), reverse=True)
     # Fail + LLM holatida full_scan yetarli; watchlist ranked ga qo'shilsa Telegram "signal" bilan aralashadi.
     if (
         not ranked_signals
