@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
@@ -16,27 +17,6 @@ from agents.chatgpt_analyst_agent import ChatGPTAnalystAgent
 from agents.email_alerts_agent import EmailAlertsAgent
 from agents.logger_agent import LoggerAgent
 from agents.market_data_agent import MarketDataAgent
-# MTF / AMT / skalp darajalari — fayl yo‘q bo‘lsa skan sinmaydi (no-op).
-try:
-    from agents.mtf_snapshot import maybe_attach_mtf_snapshot as _maybe_attach_mtf_snapshot
-except Exception:  # noqa: BLE001
-
-    def _maybe_attach_mtf_snapshot(market_data: Any, ticker: str, signal: Dict[str, Any]) -> Dict[str, Any]:
-        return signal
-
-try:
-    from agents.amt_vwap_scalp import maybe_attach_amt_snapshot as _maybe_attach_amt_snapshot
-except Exception:  # noqa: BLE001
-
-    def _maybe_attach_amt_snapshot(market_data: Any, ticker: str, signal: Dict[str, Any]) -> Dict[str, Any]:
-        return signal
-
-try:
-    from agents.scalp_daytrade_levels import maybe_attach_scalp_daytrade_levels as _maybe_attach_scalp_daytrade_levels
-except Exception:  # noqa: BLE001
-
-    def _maybe_attach_scalp_daytrade_levels(signal: Dict[str, Any]) -> Dict[str, Any]:
-        return signal
 from agents.risk_manager_agent import RiskManagerAgent
 from agents.rvol_agent import RVOLAgent
 from agents.scan_presets import SCAN_PRESETS
@@ -48,6 +28,49 @@ from agents.telegram_alerts_agent import TelegramAlertsAgent
 from agents.universe_agent import FALLBACK_US_EQUITIES, UniverseAgent
 from src.modules.halal_gate import apply_halal_gate, halal_report_to_dict
 from src.providers.zoya_client import fetch_zoya_compliance
+
+_log = logging.getLogger(__name__)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Rank/alert uchun: score 'abc' bo‘lsa ham skan yiqilmasin."""
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _noop_attach_mtf(market_data: Any, ticker: str, signal: Dict[str, Any]) -> Dict[str, Any]:
+    return signal
+
+
+def _noop_attach_amt(market_data: Any, ticker: str, signal: Dict[str, Any]) -> Dict[str, Any]:
+    return signal
+
+
+def _noop_attach_scalp(signal: Dict[str, Any]) -> Dict[str, Any]:
+    return signal
+
+
+try:
+    from agents.mtf_snapshot import maybe_attach_mtf_snapshot as _maybe_attach_mtf_snapshot
+except ImportError as exc:
+    _log.warning("mtf_snapshot unavailable, MTF attach disabled: %s", exc)
+    _maybe_attach_mtf_snapshot = _noop_attach_mtf  # type: ignore[assignment]
+
+try:
+    from agents.amt_vwap_scalp import maybe_attach_amt_snapshot as _maybe_attach_amt_snapshot
+except ImportError as exc:
+    _log.warning("amt_vwap_scalp unavailable, AMT attach disabled: %s", exc)
+    _maybe_attach_amt_snapshot = _noop_attach_amt  # type: ignore[assignment]
+
+try:
+    from agents.scalp_daytrade_levels import maybe_attach_scalp_daytrade_levels as _maybe_attach_scalp_daytrade_levels
+except ImportError as exc:
+    _log.warning("scalp_daytrade_levels unavailable, scalp levels disabled: %s", exc)
+    _maybe_attach_scalp_daytrade_levels = _noop_attach_scalp  # type: ignore[assignment]
 
 
 def _intraday_strategy_mode(mode: str) -> bool:
@@ -457,10 +480,13 @@ def run_scan_market(
     if _env_truthy_scan_default("AMT_VWAP_SCALP_ENABLED", True) and _env_truthy_scan_default("AMT_RANK_BUY_FIRST", True):
         ranked_signals = sorted(
             signals,
-            key=lambda item: (not bool(item.get("amt_buy_signal")), -float(item.get("score") or 0)),
+            key=lambda item: (
+                not bool(item.get("amt_buy_signal")),
+                -_safe_float(item.get("score")),
+            ),
         )
     else:
-        ranked_signals = sorted(signals, key=lambda item: item.get("score", 0), reverse=True)
+        ranked_signals = sorted(signals, key=lambda item: _safe_float(item.get("score")), reverse=True)
     # Fail + LLM holatida full_scan yetarli; watchlist ranked ga qo'shilsa Telegram "signal" bilan aralashadi.
     if (
         not ranked_signals
@@ -473,10 +499,10 @@ def run_scan_market(
         candidate_pool = sorted(
             candidate_pool,
             key=lambda item: (
-                float(item.get("score") or 0),
-                float(item.get("rvol") or 0),
-                float(item.get("change_percent") or 0),
-                float(item.get("volume") or 0),
+                _safe_float(item.get("score")),
+                _safe_float(item.get("rvol")),
+                _safe_float(item.get("change_percent")),
+                _safe_float(item.get("volume")),
             ),
             reverse=True,
         )

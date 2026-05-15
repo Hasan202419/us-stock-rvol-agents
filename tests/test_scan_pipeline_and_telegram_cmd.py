@@ -6,12 +6,14 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+import requests
 
 from agents.scan_presets import SCAN_PRESETS
 from agents.scan_pipeline import (
     SidebarControls,
     _email_or_telegram_top_n_for_alerts,
     _env_int_bounded,
+    _safe_float,
     fetch_universe_for_scan,
     telegram_default_controls,
 )
@@ -49,6 +51,13 @@ def test_env_int_bounded(
     else:
         monkeypatch.delenv(key, raising=False)
     assert _env_int_bounded(key, default, lo=2, hi=20) == expected
+
+
+def test_safe_float_handles_bad_values() -> None:
+    assert _safe_float(12.5) == 12.5
+    assert _safe_float(None) == 0.0
+    assert _safe_float("abc") == 0.0
+    assert _safe_float("3", default=1.0) == 3.0
 
 
 def test_email_or_telegram_top_n(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,6 +145,35 @@ def test_telegram_command_from_text_basic() -> None:
 def test_escape_html_escapes_tags() -> None:
     bot = _load_command_bot_script()
     assert "&lt;br&gt;" in bot._escape_html("<br>")
+
+
+def test_register_bot_menu_commands_calls_setmycommands(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_post(url: str, *, json=None, timeout=None, **kwargs: object) -> object:
+        calls.append((url, json))
+
+        class R:
+            ok = True
+            status_code = 200
+            text = '{"ok":true}'
+
+            def json(self) -> dict[str, bool]:
+                return {"ok": True}
+
+        return R()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.delenv("TELEGRAM_SKIP_SET_MY_COMMANDS", raising=False)
+    bot = _load_command_bot_script()
+    bot._register_bot_menu_commands("TESTTOKEN")
+    assert len(calls) == 1
+    assert "setMyCommands" in calls[0][0]
+    body = calls[0][1]
+    assert isinstance(body, dict) and "commands" in body
+    cmds = body["commands"]
+    assert isinstance(cmds, list) and cmds[0]["command"] == "start"
+    assert any(c.get("command") == "scan" for c in cmds)
 
 
 def test_parse_allowed_chat_ids_supergroup(monkeypatch: pytest.MonkeyPatch) -> None:
