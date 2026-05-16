@@ -22,7 +22,12 @@ if str(PROJECT_DIR) not in sys.path:
 
 os.environ.setdefault("PROJECT_ROOT", str(PROJECT_DIR))
 
-from agents.bootstrap_env import ensure_env_file, load_project_env  # noqa: E402
+from agents.bootstrap_env import (  # noqa: E402
+    alpaca_credentials_ok,
+    alpaca_credentials_source_hint,
+    ensure_env_file,
+    load_project_env,
+)
 from agents.scan_pipeline import (  # noqa: E402
     SidebarControls,
     _env_int_bounded,
@@ -860,7 +865,8 @@ def _status_html() -> str:
         f"TRADING_MODE: <code>{_escape_html(trading_mode)}</code>\n"
         f"ALPACA_BASE_URL: <code>{_escape_html(base)}</code>\n"
         f"Paper config: <b>{'OK' if paper_ok else 'CHECK'}</b>\n"
-        f"Alpaca keys: <b>{'OK' if key_ok else 'MISSING'}</b>\n"
+        f"Alpaca keys: <b>{'OK' if key_ok else 'MISSING'}</b>"
+        f" <i>({_escape_html(key_hint)})</i>\n"
         f"Telegram token: <b>{'OK' if tg_key_ok else 'MISSING'}</b>\n"
         f"TELEGRAM_AUTO_PUSH_ENABLED: <code>{_escape_html(ap_en)}</code> · interval_min: <code>{_escape_html(ap_iv)}</code> · "
         f"scanall: <code>{_escape_html(ap_sa)}</code>\n"

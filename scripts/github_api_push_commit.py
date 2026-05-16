@@ -26,6 +26,7 @@ DEFAULT_BRANCH = "main"
 
 # Market Shield + bog‘liq fayllar (loyiha ildizidan nisbiy yo‘l).
 DEFAULT_PATHS: tuple[str, ...] = (
+    "agents/bootstrap_env.py",
     "agents/market_shield.py",
     "agents/scan_pipeline.py",
     "agents/risk_manager_agent.py",
@@ -37,6 +38,7 @@ DEFAULT_PATHS: tuple[str, ...] = (
     "scripts/agent_run_push.py",
     "scripts/github_api_push_commit.py",
     "tests/test_market_shield.py",
+    "tests/test_bootstrap_env.py",
     "pine/market_shield_filter.pine",
     ".env.example",
     "README.md",

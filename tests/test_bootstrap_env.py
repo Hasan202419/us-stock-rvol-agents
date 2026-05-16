@@ -137,3 +137,13 @@ def test_alpaca_legacy_aliases_map_to_current_names(tmp_path: Path, monkeypatch:
     load_project_env(tmp_path)
     assert os.environ.get("ALPACA_API_KEY") == "key-legacy"
     assert os.environ.get("ALPACA_SECRET_KEY") == "secret-legacy"
+
+
+def test_alpaca_credentials_ok_without_canonical_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+    monkeypatch.setenv("ALPACA_API_KEY_ID", "k1")
+    monkeypatch.setenv("ALPACA_API_SECRET_KEY", "s1")
+    from agents.bootstrap_env import alpaca_credentials_ok
+
+    assert alpaca_credentials_ok() is True

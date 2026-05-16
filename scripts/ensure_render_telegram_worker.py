@@ -315,6 +315,17 @@ def _build_add_env() -> list[dict[str, str]]:
     rows_by_key: dict[str, dict[str, str]] = {r["key"]: r for r in rows}
     for k, v in forced_defaults.items():
         rows_by_key[k] = {"key": k, "value": v}
+
+    # Alpaca: Render dashboard ba’zan faqat alias nomlarda saqlanadi — hammasiga bir xil qiymat.
+    api = os.getenv("ALPACA_API_KEY", "").strip() or os.getenv("ALPACA_API_KEY_ID", "").strip()
+    sec = os.getenv("ALPACA_SECRET_KEY", "").strip() or os.getenv("ALPACA_API_SECRET_KEY", "").strip()
+    if api:
+        for alias in ("ALPACA_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_KEY_ID"):
+            rows_by_key[alias] = {"key": alias, "value": api}
+    if sec:
+        for alias in ("ALPACA_SECRET_KEY", "ALPACA_API_SECRET_KEY"):
+            rows_by_key[alias] = {"key": alias, "value": sec}
+
     rows = list(rows_by_key.values())
     return rows
 

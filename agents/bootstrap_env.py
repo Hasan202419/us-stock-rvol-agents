@@ -93,6 +93,42 @@ def normalize_alpaca_secret_alias() -> None:
         os.environ["ALPACA_SECRET_KEY"] = secret
 
 
+def alpaca_credentials_ok() -> bool:
+    """Paper API uchun API key + secret (barcha alias nomlar bilan)."""
+
+    normalize_alpaca_key_alias()
+    normalize_alpaca_secret_alias()
+    key = (
+        os.getenv("ALPACA_API_KEY", "").strip()
+        or os.getenv("ALPACA_API_KEY_ID", "").strip()
+        or os.getenv("ALPACA_KEY_ID", "").strip()
+    )
+    secret = os.getenv("ALPACA_SECRET_KEY", "").strip() or os.getenv("ALPACA_API_SECRET_KEY", "").strip()
+    return bool(key and secret)
+
+
+def alpaca_credentials_source_hint() -> str:
+    """Diagnostika: qaysi env kalit topildi (qiymatsiz)."""
+
+    normalize_alpaca_key_alias()
+    normalize_alpaca_secret_alias()
+    key_name = ""
+    for name in ("ALPACA_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_KEY_ID"):
+        if os.getenv(name, "").strip():
+            key_name = name
+            break
+    sec_name = ""
+    for name in ("ALPACA_SECRET_KEY", "ALPACA_API_SECRET_KEY"):
+        if os.getenv(name, "").strip():
+            sec_name = name
+            break
+    if key_name and sec_name:
+        return f"{key_name}+{sec_name}"
+    if not key_name and not sec_name:
+        return "set ALPACA_API_KEY + ALPACA_SECRET_KEY on Render"
+    return f"missing: {'' if key_name else 'API_KEY'} {'' if sec_name else 'SECRET'}"
+
+
 def normalize_polygon_alias() -> None:
     """Eski loyihadagi `MASSIVE_API_KEY` ni `POLYGON_API_KEY` o‘rnida qabul qiladi."""
 
