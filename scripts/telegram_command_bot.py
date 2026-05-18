@@ -7,9 +7,10 @@ import os
 import sys
 import threading
 import time
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta, time as dt_time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -28,12 +29,18 @@ from agents.bootstrap_env import (  # noqa: E402
     ensure_env_file,
     load_project_env,
 )
+from agents.prop_scalp_rank import (  # noqa: E402
+    filter_prop_scalp_candidates,
+    rank_for_prop_scalp,
+)
 from agents.scan_pipeline import (  # noqa: E402
     SidebarControls,
     _env_int_bounded,
+    fetch_trader2b_universe_for_scan,
     fetch_universe_for_scan,
     run_scan_market,
     telegram_default_controls,
+    telegram_trader2b_controls,
 )
 from agents.scan_presets import SCAN_PRESETS  # noqa: E402
 from agents.session_calendar import NY_TZ, is_weekday_et, ny_session_bounds_for_date  # noqa: E402
@@ -56,6 +63,7 @@ MAX_MESSAGE_LEN = 3800
 
 # Pastki menyu tugmalari (ReplyKeyboardMarkup)
 BTN_SCAN = "📊 Skan"
+BTN_SCAN2B = "⚡ 2B Skan"
 BTN_SIGNALS = "📋 Signallar"
 BTN_PLAN = "📝 Plan"
 BTN_STATUS = "⚙️ Holat"
@@ -64,6 +72,7 @@ BTN_RISK = "🛡 Risk"
 
 _TEXT_BUTTON_TO_CMD: Dict[str, tuple[str, str]] = {
     BTN_SCAN: ("scan", ""),
+    BTN_SCAN2B: ("scan2b", ""),
     BTN_SIGNALS: ("signals", ""),
     BTN_PLAN: ("plan", ""),
     BTN_STATUS: ("status", ""),
@@ -150,6 +159,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "help", "description": "Barcha buyruqlar (HTML yordam)"},
         {"command": "scan", "description": "US skan (dashboard bilan bir xil)"},
         {"command": "scanall", "description": "Keng qamrovli skan (/scanall)"},
+        {"command": "scan2b", "description": "Trader2B ro‘yxati · 1m/5m/1H qisqa muddat"},
         {"command": "signals", "description": "Oxirgi /scan qisqa natijasi"},
         {"command": "plan", "description": "Trade plan: /plan yoki /plan AAPL"},
         {"command": "tv", "description": "TradingView: /tv AAPL"},
@@ -228,9 +238,10 @@ def _html_plan_from_last_scan(ticker_filter: str) -> str:
 def _reply_keyboard_markup() -> Dict[str, Any]:
     return {
         "keyboard": [
-            [{"text": BTN_SCAN}, {"text": BTN_SIGNALS}],
-            [{"text": BTN_PLAN}, {"text": BTN_STATUS}],
-            [{"text": BTN_RISK}, {"text": BTN_HELP}],
+            [{"text": BTN_SCAN}, {"text": BTN_SCAN2B}],
+            [{"text": BTN_SIGNALS}, {"text": BTN_PLAN}],
+            [{"text": BTN_STATUS}, {"text": BTN_RISK}],
+            [{"text": BTN_HELP}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -350,6 +361,10 @@ def _partition_ranked(ranked: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]
 
 
 def _signal_status_badge(row: Dict[str, Any]) -> str:
+    aligned = int(row.get("mtf_alignment_count") or 0)
+    total = int(row.get("mtf_alignment_total") or 0)
+    if total >= 2 and aligned == total:
+        return "⚡ MTF↑"
     if bool(row.get("amt_buy_signal")) or row.get("babir_amt_card"):
         return "🟢 AMT BUY"
     if row.get("babir_amt_near"):
@@ -536,11 +551,40 @@ def _tradingview_url(symbol_like: str) -> str:
     return f"https://www.tradingview.com/chart/?symbol={quote(sym, safe=':')}"
 
 
+@contextmanager
+def _prop_scan_env() -> Iterator[None]:
+    """trader2B skan: 1m / 5m / 1H MTF + AMT scalping."""
+
+    overrides = {
+        "MTF_SNAPSHOT_ENABLED": "true",
+        "MTF_TIMEFRAMES": os.getenv("TRADER2B_MTF_TIMEFRAMES", "1,5,60").strip() or "1,5,60",
+        "MTF_SNAPSHOT_STRATEGY_PASS_ONLY": os.getenv("TRADER2B_MTF_PASS_ONLY", "false").strip() or "false",
+        "INTRADAY_TIMEFRAME_MINUTES": os.getenv("TRADER2B_INTRADAY_TF", "5").strip() or "5",
+        "AMT_TIMEFRAME_MINUTES": os.getenv("TRADER2B_AMT_TF", "5").strip() or "5",
+        "AMT_VWAP_SCALP_ENABLED": "true",
+        "SCALP_DAYTRADE_LEVELS_ENABLED": "true",
+        "INTRADAY_YAHOO_BEFORE_POLYGON": "true",
+    }
+    saved: dict[str, str | None] = {}
+    for key, val in overrides.items():
+        saved[key] = os.environ.get(key)
+        os.environ[key] = val
+    try:
+        yield
+    finally:
+        for key, old in saved.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+
 def _persist_last_scan(
     *,
     ranked: List[Dict[str, Any]],
     summary: Dict[str, Any],
     universe_size: int,
+    scan_type: str = "default",
 ) -> None:
     state_dir = PROJECT_DIR / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -551,6 +595,7 @@ def _persist_last_scan(
     amt_cap = _amt_buy_top_n()
     payload = {
         "saved_at_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "scan_type": scan_type,
         "universe_size": universe_size,
         "summary": summary,
         "top_signals": ranked[:top_n],
@@ -558,6 +603,11 @@ def _persist_last_scan(
     }
     path = state_dir / "last_telegram_scan.json"
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    if scan_type == "trader2b":
+        (state_dir / "last_trader2b_scan.json").write_text(
+            json.dumps(payload, indent=2, default=str),
+            encoding="utf-8",
+        )
 
 
 def _truthy_env(name: str, *, default: bool = False) -> bool:
@@ -605,13 +655,17 @@ def _start_scan_background(
     scan_lock: threading.Lock,
     *,
     run_all: bool,
+    scan_mode: str = "default",
 ) -> bool:
     """Skanni fon threadida ishga tushiradi — long-poll boshqa tugmalarni bloklamasligi uchun."""
 
     if not scan_lock.acquire(blocking=False):
         return False
     kb = _reply_keyboard_markup()
-    label = "Keng skan" if run_all else "Skan"
+    if scan_mode == "trader2b":
+        label = "Trader2B · 1m/5m/1H"
+    else:
+        label = "Keng skan" if run_all else "Skan"
     _send_html(
         token,
         chat_s,
@@ -621,7 +675,7 @@ def _start_scan_background(
 
     def _worker() -> None:
         try:
-            _execute_scan_send_persist(token, chat_s, run_all=run_all)
+            _execute_scan_send_persist(token, chat_s, run_all=run_all, scan_mode=scan_mode)
         except Exception as exc:  # noqa: BLE001
             print(f"telegram_command_bot scan worker error: {exc}", flush=True)
             _send_html(
@@ -648,24 +702,37 @@ def _execute_scan_send_persist(
     run_all: bool,
     heading_html: str = "",
     for_auto_push: bool = False,
+    scan_mode: str = "default",
 ) -> None:
     """Skan → state → HTML xabar ( /scan va fon push uchun umumiy yo‘l )."""
 
     kb = _reply_keyboard_markup()
-    ctrls = telegram_default_controls()
-    if run_all:
-        max_all = _env_int_bounded("TELEGRAM_MAX_SYMBOLS_ALL", 0, 0, 9_999_999)
-        ctrls = SidebarControls(
-            desk_label=f"{ctrls.desk_label} all-us",
-            max_symbols=max_all,
-            preset_name=ctrls.preset_name,
-            rvol_thresholds=dict(ctrls.rvol_thresholds),
-            max_workers=ctrls.max_workers,
-            finviz_csv_universe=ctrls.finviz_csv_universe,
-        )
-    tickers = fetch_universe_for_scan(ctrls)
+    is_trader2b = scan_mode == "trader2b"
+    if is_trader2b:
+        ctrls = telegram_trader2b_controls()
+        tickers = fetch_trader2b_universe_for_scan(ctrls)
+    else:
+        ctrls = telegram_default_controls()
+        if run_all:
+            max_all = _env_int_bounded("TELEGRAM_MAX_SYMBOLS_ALL", 0, 0, 9_999_999)
+            ctrls = SidebarControls(
+                desk_label=f"{ctrls.desk_label} all-us",
+                max_symbols=max_all,
+                preset_name=ctrls.preset_name,
+                rvol_thresholds=dict(ctrls.rvol_thresholds),
+                max_workers=ctrls.max_workers,
+                finviz_csv_universe=ctrls.finviz_csv_universe,
+            )
+        tickers = fetch_universe_for_scan(ctrls)
     n_tickers = len(tickers)
-    if run_all:
+    if is_trader2b:
+        tfs = os.getenv("TRADER2B_MTF_TIMEFRAMES", "1,5,60").strip() or "1,5,60"
+        start_msg = (
+            f"<b>Trader2B</b> skan… <b>{n_tickers}</b> ticker "
+            f"(<a href=\"https://trader2b.com/get-funded/symbols/\">Toro ro‘yxati</a>) · "
+            f"MTF <code>{_escape_html(tfs)}</code> · qisqa muddat signallar."
+        )
+    elif run_all:
         start_msg = f"Keng skan boshlandi… <b>{n_tickers}</b> ticker tekshiriladi."
     else:
         start_msg = f"Skan boshlandi… <b>{n_tickers}</b> ticker (2 xabar: skan + AMT)."
@@ -679,14 +746,42 @@ def _execute_scan_send_persist(
     os.environ["TELEGRAM_ALERT_ON_SCAN"] = "false"
     if _truthy_env("TELEGRAM_INTRADAY_YAHOO_FIRST", default=True):
         os.environ["INTRADAY_YAHOO_BEFORE_POLYGON"] = "true"
+    scan_ctx = _prop_scan_env() if is_trader2b else nullcontext()
     try:
-        ranked, _views, summary = run_scan_market(
-            tickers,
-            ctrls,
-            repo_root=PROJECT_DIR,
-            progress=None,
-        )
-        if not ranked and ctrls.preset_name != "Explorer":
+        with scan_ctx:
+            ranked, _views, summary = run_scan_market(
+                tickers,
+                ctrls,
+                repo_root=PROJECT_DIR,
+                progress=None,
+            )
+        if is_trader2b and ranked:
+            min_mtf = _env_int_bounded("TRADER2B_MIN_MTF_ALIGNED", 2, 1, 3)
+            ranked = filter_prop_scalp_candidates(ranked, min_mtf_aligned=min_mtf)
+            ranked = rank_for_prop_scalp(ranked)
+            summary = dict(summary)
+            summary["scan_type"] = "trader2b"
+            summary["trader2b_mtf"] = os.getenv("TRADER2B_MTF_TIMEFRAMES", "1,5,60")
+        if not ranked and is_trader2b:
+            explorer_ctrls = SidebarControls(
+                desk_label=ctrls.desk_label,
+                max_symbols=ctrls.max_symbols,
+                preset_name="Explorer",
+                rvol_thresholds=dict(SCAN_PRESETS["Explorer"]),
+                max_workers=ctrls.max_workers,
+                finviz_csv_universe=False,
+            )
+            with _prop_scan_env():
+                ranked, _views, summary = run_scan_market(
+                    tickers,
+                    explorer_ctrls,
+                    repo_root=PROJECT_DIR,
+                    progress=None,
+                )
+            if ranked:
+                min_mtf = _env_int_bounded("TRADER2B_MIN_MTF_ALIGNED", 2, 1, 3)
+                ranked = rank_for_prop_scalp(filter_prop_scalp_candidates(ranked, min_mtf_aligned=min_mtf))
+        elif not ranked and ctrls.preset_name != "Explorer":
             explorer_ctrls = SidebarControls(
                 desk_label=ctrls.desk_label,
                 max_symbols=ctrls.max_symbols,
@@ -715,7 +810,12 @@ def _execute_scan_send_persist(
     if _truthy_env("TELEGRAM_BABIR_MERGE_AMT_RANKED", default=True):
         ranked = enrich_ranked_for_babir(ranked, summary)
 
-    _persist_last_scan(ranked=ranked, summary=summary, universe_size=len(tickers))
+    _persist_last_scan(
+        ranked=ranked,
+        summary=summary,
+        universe_size=len(tickers),
+        scan_type="trader2b" if is_trader2b else "default",
+    )
 
     top_n = _telegram_reply_top_n()
     passes, watch = _partition_ranked(ranked)
@@ -737,9 +837,12 @@ def _execute_scan_send_persist(
         )
         return
 
-    if for_auto_push and babir_watchlist:
+    if is_trader2b and not for_auto_push:
         include_watchlist = True
-        scan_heading: Optional[str] = "Babir market skani"
+        scan_heading = "Trader2B · qisqa muddat (1m/5m/1H)"
+    elif for_auto_push and babir_watchlist:
+        include_watchlist = True
+        scan_heading = "Babir market skani"
     else:
         include_watchlist = not pass_only_push
         scan_heading = "Skan yakunlandi"
@@ -856,6 +959,7 @@ _help_text = """<b>Mavjud buyruqlar</b>
 /start yoki /help — yordam
 /scan — to‘liq skan (dashboard bilan bir xil konveyer)
 /scanall — kattaroq qamrov (TELEGRAM_MAX_SYMBOLS_ALL dan oladi)
+/scan2b — <a href="https://trader2b.com/get-funded/symbols/">Trader2B</a> Toro ro‘yxati · 1m/5m/1H MTF · qisqa muddat (AAPL TSLA PLTR ORCL va boshqalar)
 /plan [TICKER] — oxirgi /scan dan professional trade plan (bo‘sh TICKER = birinchi top)
 /signals — oxirgi /scan ning qisqa natijasi (agar saqlangan bo‘lsa; worker restart/deploydan keyin yo‘qolishi mumkin)
 <i>Telegram (ixtiyoriy .env):</i> <code>TELEGRAM_BOT_REPLY_TOP_N</code> (1…500, sukut 6) — skan/signals “Top”; 
@@ -1123,12 +1227,13 @@ def main() -> None:
                     _send_html(token, chat_s, _html_plan_from_last_scan(sym_f), reply_markup=kb)
                     continue
 
-                if cmd in {"scan", "scanall"}:
+                if cmd in {"scan", "scanall", "scan2b"}:
                     if not _start_scan_background(
                         token,
                         chat_s,
                         scan_lock,
                         run_all=(cmd == "scanall"),
+                        scan_mode="trader2b" if cmd == "scan2b" else "default",
                     ):
                         _send_html(
                             token,

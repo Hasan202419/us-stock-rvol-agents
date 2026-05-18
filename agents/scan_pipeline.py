@@ -102,7 +102,9 @@ __all__ = [
     "SidebarControls",
     "build_scan_agents",
     "telegram_default_controls",
+    "telegram_trader2b_controls",
     "fetch_universe_for_scan",
+    "fetch_trader2b_universe_for_scan",
     "run_scan_market",
 ]
 
@@ -610,6 +612,34 @@ def run_scan_market(
         "candles": dict(candles_source_counter),
     }
     return ranked_signals, full_scan_views, summary
+
+
+def telegram_trader2b_controls() -> SidebarControls:
+    """trader2B / Toro ro‘yxati — qisqa muddat (1m/5m/1H MTF)."""
+
+    preset = os.getenv("TRADER2B_SCAN_PRESET", "PropScalp").strip()
+    if preset not in SCAN_PRESETS:
+        preset = "PropScalp"
+    return SidebarControls(
+        desk_label=os.getenv("TRADER2B_DESK_LABEL", "Trader2B prop").strip() or "Trader2B prop",
+        max_symbols=_env_int_bounded("TRADER2B_MAX_SYMBOLS", 120, 10, 500),
+        preset_name=preset,
+        rvol_thresholds=dict(SCAN_PRESETS[preset]),
+        max_workers=_env_int_bounded(
+            "TRADER2B_SCAN_MAX_WORKERS",
+            _env_int_bounded("TELEGRAM_SCAN_MAX_WORKERS", 10, 2, 24),
+            2,
+            24,
+        ),
+        finviz_csv_universe=False,
+    )
+
+
+def fetch_trader2b_universe_for_scan(controls: SidebarControls) -> List[str]:
+    from agents.trader2b_universe import build_trader2b_universe
+
+    lim = int(controls.max_symbols or 0)
+    return build_trader2b_universe(limit=lim if lim > 0 else 0)
 
 
 def telegram_default_controls() -> SidebarControls:

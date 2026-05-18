@@ -1,7 +1,7 @@
 @echo off
 title us-stock-rvol-agents — push + deploy (GITHUB_TOKEN .env dan)
 cd /d "%~dp0"
-python scripts\push_and_deploy_full.py -m "feat: Market Shield SPY QQQ VIX regime gates for long BUY"
+python scripts\push_and_deploy_full.py -m "chore: sync telegram bot 24/7"
 if errorlevel 1 goto fail
 echo.
 echo Tayyor.

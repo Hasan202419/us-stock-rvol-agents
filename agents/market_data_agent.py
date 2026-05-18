@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import pandas as pd
 import requests
 
+from agents.ibkr_market_data import fetch_ibkr_snapshot
 from agents.session_calendar import bar_end_in_regular_session
 
 
@@ -80,6 +81,7 @@ class MarketDataAgent:
             "polygon": lambda: self._fetch_polygon_snapshot(ticker),
             "alpaca": lambda: self._fetch_alpaca_latest_bar(ticker),
             "yahoo": lambda: self._fetch_yahoo_daily_bundle(ticker),
+            "ibkr": lambda: fetch_ibkr_snapshot(ticker),
         }
         candle_sources = {
             "polygon": lambda: self._fetch_polygon_daily_candles(ticker),
@@ -98,6 +100,7 @@ class MarketDataAgent:
         snapshot = fetched_quotes.get("polygon", {})
         alpaca_bar = fetched_quotes.get("alpaca", {})
         yahoo_bundle = fetched_quotes.get("yahoo", {})
+        ibkr_snap = fetched_quotes.get("ibkr", {})
         candles = fetched_candles.get("polygon", {}).get("candles") or fetched_candles.get("yahoo", {}).get("candles") or []
 
         price = (
@@ -105,6 +108,7 @@ class MarketDataAgent:
             or snapshot.get("price")
             or alpaca_bar.get("price")
             or yahoo_bundle.get("price")
+            or ibkr_snap.get("price")
             or 0.0
         )
         previous_close = (
@@ -113,7 +117,13 @@ class MarketDataAgent:
             or yahoo_bundle.get("previous_close")
             or 0.0
         )
-        volume = snapshot.get("volume") or alpaca_bar.get("volume") or yahoo_bundle.get("volume") or 0
+        volume = (
+            snapshot.get("volume")
+            or alpaca_bar.get("volume")
+            or yahoo_bundle.get("volume")
+            or ibkr_snap.get("volume")
+            or 0
+        )
         if not candles:
             candles = fetched_candles.get("alpha_vantage", {}).get("candles") or []
         avg_volume = self._average_volume(candles) or snapshot.get("previous_volume") or volume
