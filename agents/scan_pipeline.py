@@ -19,7 +19,7 @@ from agents.logger_agent import LoggerAgent
 from agents.market_data_agent import MarketDataAgent
 from agents.risk_manager_agent import RiskManagerAgent
 from agents.rvol_agent import RVOLAgent
-from agents.scan_presets import SCAN_PRESETS
+from agents.scan_presets import SCAN_PRESETS, resolve_scan_preset
 from agents.strategy_agent import StrategyAgent
 from agents.strategy_factory import resolve_strategy_mode, run_stage_one_strategy
 from agents.strategy_volume_ignition import VolumeIgnitionStrategyAgent
@@ -646,18 +646,17 @@ def fetch_trader2b_universe_for_scan(controls: SidebarControls) -> List[str]:
 def telegram_default_controls() -> SidebarControls:
     """Telegram `/scan` uchun .env asosidagi sukutlar."""
 
-    preset = os.getenv("TELEGRAM_SCAN_PRESET", "Explorer").strip()
+    raw_preset = os.getenv("TELEGRAM_SCAN_PRESET", "Explorer").strip()
     force_explorer = _env_truthy_scan_default("TELEGRAM_FORCE_EXPLORER", True)
-    if force_explorer and preset.lower() == "balanced":
-        preset = "Explorer"
-    if preset not in SCAN_PRESETS:
-        preset = "Explorer"
+    if force_explorer and raw_preset.lower() == "balanced":
+        raw_preset = "Explorer"
+    preset, thresholds = resolve_scan_preset(raw_preset, default="Explorer")
     return SidebarControls(
         desk_label=os.getenv("TELEGRAM_DESK_LABEL", "TG scan").strip() or "TG scan",
         # Sukut 1200 ticker; 0 = cheklovsiz (Alpaca/Polygon barcha US tradable).
         max_symbols=_env_int_bounded("TELEGRAM_MAX_SYMBOLS", 1200, 50, 9_999_999),
         preset_name=preset,
-        rvol_thresholds=dict(SCAN_PRESETS[preset]),
+        rvol_thresholds=thresholds,
         max_workers=_env_int_bounded(
             "TELEGRAM_SCAN_MAX_WORKERS",
             _env_int_bounded("SCAN_MAX_WORKERS", 12, 2, 32),
