@@ -844,11 +844,17 @@ kalit shart emas) tartibida tortiladi; Polygon cheklovi bo‘lsa
 
 
 def _status_html() -> str:
+    from agents.ibkr_market_data import ibkr_status_line
+
     trading_mode = os.getenv("TRADING_MODE", "paper").strip().lower() or "paper"
     base = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets").strip()
     paper_ok = trading_mode == "paper" and "paper-api.alpaca.markets" in base
-    key_ok = bool(os.getenv("ALPACA_API_KEY", "").strip() and os.getenv("ALPACA_SECRET_KEY", "").strip())
+    key_ok = alpaca_credentials_ok()
+    key_hint = alpaca_credentials_source_hint()
     tg_key_ok = bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
+    poly_ok = bool(os.getenv("POLYGON_API_KEY", "").strip() or os.getenv("MASSIVE_API_KEY", "").strip())
+    yahoo_on = os.getenv("YAHOO_FINANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    prov = os.getenv("MARKET_DATA_PROVIDER_PRIORITY", "polygon,alpaca,yahoo").strip()
     max_pos = os.getenv("MAX_POSITION_SIZE_USD", "10000").strip()
     max_risk = os.getenv("MAX_RISK_PCT_OF_EQUITY", os.getenv("MAX_RISK_PCT", "1.0")).strip()
     min_rr = os.getenv("MIN_RISK_REWARD_RATIO", "2.0").strip()
@@ -867,6 +873,9 @@ def _status_html() -> str:
         f"Paper config: <b>{'OK' if paper_ok else 'CHECK'}</b>\n"
         f"Alpaca keys: <b>{'OK' if key_ok else 'MISSING'}</b>"
         f" <i>({_escape_html(key_hint)})</i>\n"
+        f"Polygon/Massive: <b>{'OK' if poly_ok else '—'}</b> · Yahoo: <b>{'ON' if yahoo_on else 'OFF'}</b>\n"
+        f"Data providers: <code>{_escape_html(prov or 'default')}</code>\n"
+        f"{ibkr_status_line()}\n"
         f"Telegram token: <b>{'OK' if tg_key_ok else 'MISSING'}</b>\n"
         f"TELEGRAM_AUTO_PUSH_ENABLED: <code>{_escape_html(ap_en)}</code> · interval_min: <code>{_escape_html(ap_iv)}</code> · "
         f"scanall: <code>{_escape_html(ap_sa)}</code>\n"
