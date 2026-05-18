@@ -599,6 +599,48 @@ def _resolve_auto_push_chat_id(allowed: Optional[set[str]]) -> Optional[str]:
     return cid
 
 
+def _start_scan_background(
+    token: str,
+    chat_s: str,
+    scan_lock: threading.Lock,
+    *,
+    run_all: bool,
+) -> bool:
+    """Skanni fon threadida ishga tushiradi — long-poll boshqa tugmalarni bloklamasligi uchun."""
+
+    if not scan_lock.acquire(blocking=False):
+        return False
+    kb = _reply_keyboard_markup()
+    label = "Keng skan" if run_all else "Skan"
+    _send_html(
+        token,
+        chat_s,
+        f"⏳ <b>{label}</b> boshlandi — boshqa tugmalar ishlaydi; natija tayyor bo‘lganda keladi.",
+        reply_markup=kb,
+    )
+
+    def _worker() -> None:
+        try:
+            _execute_scan_send_persist(token, chat_s, run_all=run_all)
+        except Exception as exc:  # noqa: BLE001
+            print(f"telegram_command_bot scan worker error: {exc}", flush=True)
+            _send_html(
+                token,
+                chat_s,
+                f"<b>Skan xato</b>\n<code>{_escape_html(str(exc))[:500]}</code>",
+                reply_markup=kb,
+            )
+        finally:
+            scan_lock.release()
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name=f"tg-scan-{'all' if run_all else 'std'}-{chat_s}",
+    ).start()
+    return True
+
+
 def _execute_scan_send_persist(
     token: str,
     chat_s: str,
@@ -972,6 +1014,13 @@ def main() -> None:
                 or upd.get("channel_post")
             )
             if not msg:
+                cq = upd.get("callback_query")
+                if cq:
+                    print(
+                        "telegram_command_bot: callback_query e’tiborsiz qoldirildi "
+                        "(inline tugmalar hozircha qo‘llab-quvvatlanmaydi).",
+                        flush=True,
+                    )
                 continue
             chat_id = msg.get("chat", {}).get("id")
             if chat_id is None:
@@ -1074,35 +1123,20 @@ def main() -> None:
                     _send_html(token, chat_s, _html_plan_from_last_scan(sym_f), reply_markup=kb)
                     continue
 
-                if cmd == "scanall":
-                    if not scan_lock.acquire(blocking=False):
+                if cmd in {"scan", "scanall"}:
+                    if not _start_scan_background(
+                        token,
+                        chat_s,
+                        scan_lock,
+                        run_all=(cmd == "scanall"),
+                    ):
                         _send_html(
                             token,
                             chat_s,
-                            "Skan allaqachon ketmoqda, biroz kuting.",
+                            "Skan allaqachon ketmoqda (avto-push yoki oldingi skan). "
+                            "Tugaguncha kuting yoki /status tekshiring.",
                             reply_markup=kb,
                         )
-                        continue
-                    try:
-                        _execute_scan_send_persist(token, chat_s, run_all=True)
-                    finally:
-                        scan_lock.release()
-                    continue
-
-                if cmd == "scan":
-                    if not scan_lock.acquire(blocking=False):
-                        _send_html(
-                            token,
-                            chat_s,
-                            "Skan allaqachon ketmoqda, biroz kuting.",
-                            reply_markup=kb,
-                        )
-                        continue
-                    try:
-                        run_all = cmd == "scanall"
-                        _execute_scan_send_persist(token, chat_s, run_all=run_all)
-                    finally:
-                        scan_lock.release()
                     continue
 
                 if cmd in {"tv", "chart"}:
@@ -1132,38 +1166,54 @@ def main() -> None:
                     continue
 
                 if cmd == "backtest":
-                    sym = _backtest_symbol_from_remainder(_remainder)
+                    sym_bt = _backtest_symbol_from_remainder(_remainder)
                     lookback = _env_int_bounded("TELEGRAM_BACKTEST_LOOKBACK_DAYS", 400, 120, 800)
                     fast_bt = _env_int_bounded("TELEGRAM_BACKTEST_FAST_SMA", 10, 2, 200)
                     slow_bt = _env_int_bounded("TELEGRAM_BACKTEST_SLOW_SMA", 30, 3, 400)
                     if slow_bt <= fast_bt:
                         slow_bt = fast_bt + 20
-                    closes_bt = daily_closes_yfinance(sym, lookback)
-                    if not closes_bt:
-                        _send_html(
-                            token,
-                            chat_s,
-                            "<b>Backtest</b>: tarix chiqmadi — tarmoq yoki <code>yfinance</code> ni tekshiring.",
+
+                    def _backtest_worker() -> None:
+                        closes_bt = daily_closes_yfinance(sym_bt, lookback)
+                        if not closes_bt:
+                            _send_html(
+                                token,
+                                chat_s,
+                                "<b>Backtest</b>: tarix chiqmadi — tarmoq yoki <code>yfinance</code> ni tekshiring.",
+                                reply_markup=kb,
+                            )
+                            return
+                        res = sma_crossover_long_only_backtest(closes_bt, fast=fast_bt, slow=slow_bt)
+                        if not res.get("ok"):
+                            _send_html(
+                                token,
+                                chat_s,
+                                f"<b>Backtest</b> <code>{_escape_html(sym_bt)}</code>: ma’lumot yetarli emas "
+                                f"(bars={res.get('bars')}, fast/slow={fast_bt}/{slow_bt}).",
+                                reply_markup=kb,
+                            )
+                            return
+                        out = (
+                            f"<b>Backtest MVP</b> <code>{_escape_html(sym_bt)}</code>\n"
+                            f"Kunlar: {len(closes_bt)} · SMA {fast_bt}/{slow_bt}\n"
+                            f"Strategiya jami: <b>{res.get('strategy_total_return_pct')}%</b> "
+                            f"(long barlar: {res.get('bars_in_long')})\n"
+                            f"Buy-hold (warmup dan): <b>{res.get('buy_hold_from_warmup_pct')}%</b>\n"
+                            f"<i>{_escape_html(res.get('rule'))}</i>"
                         )
-                        continue
-                    res = sma_crossover_long_only_backtest(closes_bt, fast=fast_bt, slow=slow_bt)
-                    if not res.get("ok"):
-                        _send_html(
-                            token,
-                            chat_s,
-                            f"<b>Backtest</b> <code>{_escape_html(sym)}</code>: ma’lumot yetarli emas "
-                            f"(bars={res.get('bars')}, fast/slow={fast_bt}/{slow_bt}).",
-                        )
-                        continue
-                    msg = (
-                        f"<b>Backtest MVP</b> <code>{_escape_html(sym)}</code>\n"
-                        f"Kunlar: {len(closes_bt)} · SMA {fast_bt}/{slow_bt}\n"
-                        f"Strategiya jami: <b>{res.get('strategy_total_return_pct')}%</b> "
-                        f"(long barlar: {res.get('bars_in_long')})\n"
-                        f"Buy-hold (warmup dan): <b>{res.get('buy_hold_from_warmup_pct')}%</b>\n"
-                        f"<i>{_escape_html(res.get('rule'))}</i>"
+                        _send_html(token, chat_s, out, reply_markup=kb)
+
+                    _send_html(
+                        token,
+                        chat_s,
+                        f"⏳ Backtest <code>{_escape_html(sym_bt)}</code> hisoblanmoqda…",
+                        reply_markup=kb,
                     )
-                    _send_html(token, chat_s, msg)
+                    threading.Thread(
+                        target=_backtest_worker,
+                        daemon=True,
+                        name=f"tg-backtest-{sym_bt}",
+                    ).start()
                     continue
 
                 _send_html(
