@@ -35,6 +35,7 @@ from agents.market_shield import (
     build_market_shield_snapshot,
     market_shield_blocks_paper,
 )
+from agents.symbol_filter import filter_scannable_symbols
 from agents.universe_agent import FALLBACK_US_EQUITIES, UniverseAgent
 from src.modules.halal_gate import apply_halal_gate, halal_report_to_dict
 from src.providers.zoya_client import fetch_zoya_compliance
@@ -674,7 +675,9 @@ def fetch_universe_for_scan(controls: SidebarControls) -> List[str]:
         "yes",
         "on",
     }
-    out = list(UniverseAgent().fetch_symbols(limit=controls.max_symbols, use_finviz_elite=use_finviz))
+    out = filter_scannable_symbols(
+        UniverseAgent().fetch_symbols(limit=controls.max_symbols, use_finviz_elite=use_finviz)
+    )
     if not out:
         # Eski fork / noyob xato: bo‘sh universe → Telegram “Tickers: 0”; minimal likvid ro‘yxat.
         lim = controls.max_symbols

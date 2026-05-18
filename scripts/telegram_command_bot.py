@@ -882,6 +882,7 @@ def _auto_push_loop(token: str, chat_id: str, scan_lock: threading.Lock) -> None
 
     interval_min = _env_int_bounded("TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES", 1440, 15, 10080)
     use_scanall = _truthy_env("TELEGRAM_AUTO_PUSH_USE_SCANALL", default=False)
+    use_trader2b_push = _truthy_env("TELEGRAM_AUTO_PUSH_USE_TRADER2B", default=True)
     first_delay_sec = max(30, _env_int_bounded("TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC", 120, 30, 3600))
     at_raw = os.getenv("TELEGRAM_AUTO_PUSH_AT", "").strip()
     parsed_at = _parse_auto_push_at(at_raw) if at_raw else None
@@ -930,13 +931,23 @@ def _auto_push_loop(token: str, chat_id: str, scan_lock: threading.Lock) -> None
                 )
             else:
                 head = "<b>Avtomatik market skani</b> <i>(Babir uslubi)</i>"
-            _execute_scan_send_persist(
-                token,
-                chat_id,
-                run_all=use_scanall,
-                heading_html=head,
-                for_auto_push=True,
-            )
+            if use_trader2b_push and not use_scanall:
+                _execute_scan_send_persist(
+                    token,
+                    chat_id,
+                    run_all=False,
+                    heading_html=head,
+                    for_auto_push=True,
+                    scan_mode="trader2b",
+                )
+            else:
+                _execute_scan_send_persist(
+                    token,
+                    chat_id,
+                    run_all=use_scanall,
+                    heading_html=head,
+                    for_auto_push=True,
+                )
         except Exception as exc:  # noqa: BLE001
             print(f"telegram_command_bot: auto-push xato: {exc}", flush=True)
             try:

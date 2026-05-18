@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import List
 
+from agents.symbol_filter import filter_scannable_symbols, is_scannable_us_equity
+
 # Foydalanuvchi talab qilgan va tez-tez skan qilinadigan taniqli tickerlar (doim ro‘yxatda).
 CORE_LIQUID_SYMBOLS: tuple[str, ...] = (
     "AAPL",
@@ -53,7 +55,7 @@ def load_trader2b_symbols_file(path: Path | None = None) -> List[str]:
     out: list[str] = []
     for line in fp.read_text(encoding="utf-8", errors="replace").splitlines():
         sym = _parse_symbol_line(line)
-        if sym and sym not in seen:
+        if sym and is_scannable_us_equity(sym) and sym not in seen:
             seen.add(sym)
             out.append(sym)
     return out
@@ -89,9 +91,10 @@ def build_trader2b_universe(*, limit: int = 0) -> List[str]:
     add_many(_extra_from_env())
     add_many(load_trader2b_symbols_file())
 
+    filtered = filter_scannable_symbols(ordered)
     if limit > 0:
-        return ordered[:limit]
-    return ordered
+        return filtered[:limit]
+    return filtered
 
 
 def trader2b_universe_size() -> int:

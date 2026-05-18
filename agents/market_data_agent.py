@@ -1,3 +1,4 @@
+import logging
 import os
 import time as time_module
 from datetime import UTC, datetime, timedelta
@@ -8,6 +9,10 @@ import requests
 
 from agents.ibkr_market_data import fetch_ibkr_snapshot
 from agents.session_calendar import bar_end_in_regular_session
+from agents.symbol_filter import is_scannable_us_equity
+
+# Yahoo (yfinance) delisted/warrant shovqinini kamaytirish
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 class MarketDataAgent:
@@ -485,7 +490,7 @@ class MarketDataAgent:
     def _fetch_yahoo_daily_bundle(self, symbol: str) -> Dict[str, Any]:
         """Daily history + last prices from Yahoo (yfinance). No API key."""
 
-        if not self.yahoo_finance_enabled:
+        if not self.yahoo_finance_enabled or not is_scannable_us_equity(symbol):
             return {}
 
         try:
@@ -552,7 +557,7 @@ class MarketDataAgent:
     def _intraday_via_yahoo(self, symbol: str, timeframe_minutes: int, window_days: int) -> List[Dict[str, Any]]:
         """Minute aggregates from Yahoo; fallback or before Polygon when INTRADAY_YAHOO_BEFORE_POLYGON is set."""
 
-        if not self.yahoo_finance_enabled:
+        if not self.yahoo_finance_enabled or not is_scannable_us_equity(symbol):
             return []
 
         try:
