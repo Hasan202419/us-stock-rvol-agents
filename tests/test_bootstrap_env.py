@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agents.bootstrap_env import (
+    is_render_runtime,
     load_project_env,
     promote_master_plan_comment_env,
     resolve_render_service_id_from_api,
@@ -105,6 +106,18 @@ def test_promote_openai_from_comment_when_active_empty(tmp_path: Path, monkeypat
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     load_project_env(tmp_path)
     assert os.environ.get("OPENAI_API_KEY") == "sk-from-comment-12345678901234567890"
+
+
+def test_render_dashboard_env_not_clobbered_by_empty_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text("POLYGON_API_KEY=\nTELEGRAM_BOT_TOKEN=\n", encoding="utf-8")
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setenv("POLYGON_API_KEY", "from-render-dashboard")
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    load_project_env(tmp_path)
+    assert os.environ.get("POLYGON_API_KEY") == "from-render-dashboard"
+    assert is_render_runtime() is True
 
 
 def test_dotenv_overrides_empty_system_placeholder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

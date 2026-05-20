@@ -32,8 +32,17 @@ _COMMENT_LINE = re.compile(
 )
 
 
+def is_render_runtime() -> bool:
+    """Render platformasi `RENDER=true` qo‘yadi — Dashboard env ustuvor bo‘lishi kerak."""
+
+    return os.getenv("RENDER", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def ensure_env_file(project_root: Path) -> bool:
     """`.env` yo‘q bo‘lsa, `.env.example` dan nusxa oladi. Yaratildi-yo‘qligini qaytaradi."""
+
+    if is_render_runtime():
+        return False
 
     env_path = project_root / ".env"
     example = project_root / ".env.example"
@@ -259,11 +268,9 @@ def load_project_env(project_root: Path) -> Path:
     from dotenv import load_dotenv
 
     env_path = project_root / ".env"
-    # Standart load_dotenv(override=False): agar OPENAI_* kabi kalit Windows "User environment"
-    # da mavjud ammo bo‘sh bo‘lsa, .env qiymati yuklanmaydi — barcha kalitlar "bo‘sh" bo‘lib qoladi.
-    # Loyiha papkasidagi .env uchun shu qiymatlarni ustuvor qilamiz. Render-da .env odatda yo‘qligi
-    # sabab Dashboard env o‘zgarmaydi.
-    load_dotenv(env_path, override=True, encoding="utf-8-sig")
+    # Lokal: override=True — Windows User env da bo‘sh placeholder bo‘lsa, loyiha `.env` ustun.
+    # Render: override=False — Dashboard / API env bo‘sh `.env.example` nusxasi bilan yutilmasin.
+    load_dotenv(env_path, override=not is_render_runtime(), encoding="utf-8-sig")
     promote_master_plan_comment_env(env_path)
     drop_invalid_render_service_id()
     resolve_render_service_id_from_api()

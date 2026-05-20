@@ -301,6 +301,8 @@ def _build_add_env() -> list[dict[str, str]]:
         # Babir uslubi: worker fonida muntazam skan + ~6 ta ticker (chat: TELEGRAM_CHAT_ID yoki TELEGRAM_AUTO_PUSH_CHAT_ID .env dan).
         "TELEGRAM_AUTO_PUSH_ENABLED": "true",
         "TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES": "1440",
+        "TELEGRAM_AUTO_PUSH_AT": "18:30",
+        "TELEGRAM_AUTO_PUSH_TZ": "Asia/Tashkent",
         "TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC": "120",
         "TELEGRAM_AUTO_PUSH_PASS_ONLY": "false",
         "TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST": "true",
