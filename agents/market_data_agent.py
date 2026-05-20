@@ -61,6 +61,16 @@ class MarketDataAgent:
 
         self._intraday_cache: Dict[tuple[str, int], tuple[float, List[Dict[str, Any]]]] = {}
 
+    @staticmethod
+    def _normalize_provider_payload(data: Any) -> Dict[str, Any]:
+        """Ba'zi providerlar ro‘yxat qaytaradi (masalan Polygon `results`) — dict ga normalizatsiya."""
+
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list):
+            return {"candles": data}
+        return {}
+
     def _provider_priority(self) -> List[str]:
         raw = os.getenv("MARKET_DATA_PROVIDER_PRIORITY", "").strip()
         if raw:
@@ -89,7 +99,7 @@ class MarketDataAgent:
             "ibkr": lambda: fetch_ibkr_snapshot(ticker),
         }
         candle_sources = {
-            "polygon": lambda: self._fetch_polygon_daily_candles(ticker),
+            "polygon": lambda: {"candles": self._fetch_polygon_daily_candles(ticker)},
             "yahoo": lambda: self._fetch_yahoo_daily_bundle(ticker),
             "alpha_vantage": lambda: {"candles": self._fetch_alpha_vantage_daily(ticker)},
         }
@@ -97,9 +107,9 @@ class MarketDataAgent:
         fetched_candles: Dict[str, Dict[str, Any]] = {}
         for provider in priority:
             if provider in quote_sources and provider not in fetched_quotes:
-                fetched_quotes[provider] = quote_sources[provider]() or {}
+                fetched_quotes[provider] = self._normalize_provider_payload(quote_sources[provider]())
             if provider in candle_sources and provider not in fetched_candles:
-                fetched_candles[provider] = candle_sources[provider]() or {}
+                fetched_candles[provider] = self._normalize_provider_payload(candle_sources[provider]())
 
         quote = fetched_quotes.get("finnhub", {})
         snapshot = fetched_quotes.get("polygon", {})
