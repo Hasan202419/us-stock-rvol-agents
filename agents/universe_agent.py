@@ -4,6 +4,7 @@ from typing import List
 import requests
 
 from agents.finviz_elite_export import fetch_export_csv_bytes, symbols_from_finviz_csv
+from agents.symbol_filter import filter_scannable_symbols, is_scannable_us_equity
 
 # API kalitlari yo‘q / xato bo‘lsa ham skan hech bo‘lmaganda bo‘sh qolmasin (Telegram “Tickers: 0”).
 FALLBACK_US_EQUITIES: tuple[str, ...] = (
@@ -108,11 +109,11 @@ class UniverseAgent:
             return []
 
         symbols = [
-            asset["symbol"]
+            str(asset.get("symbol") or "").strip().upper()
             for asset in assets
             if asset.get("tradable") and asset.get("exchange") in {"NYSE", "NASDAQ", "AMEX"}
         ]
-        syms = sorted(symbols)
+        syms = sorted(filter_scannable_symbols(symbols))
         return syms if limit <= 0 else syms[:limit]
 
     def _fetch_from_polygon(self, limit: int) -> List[str]:
@@ -150,7 +151,7 @@ class UniverseAgent:
 
             for item in payload.get("results", []) or []:
                 ticker = str(item.get("ticker") or "").strip().upper()
-                if not ticker or ticker in seen:
+                if not ticker or ticker in seen or not is_scannable_us_equity(ticker):
                     continue
                 seen.add(ticker)
                 out.append(ticker)

@@ -33,6 +33,20 @@ from agents.prop_scalp_rank import (  # noqa: E402
     filter_prop_scalp_candidates,
     rank_for_prop_scalp,
 )
+from agents.trade_actionable import (  # noqa: E402
+    action_badge,
+    classify_trade_action,
+    partition_by_action,
+)
+from agents.telegram_paper_trade import (  # noqa: E402
+    execute_paper_trade,
+    format_paper_result_html,
+    load_last_scan_signals,
+    paper_help_html,
+    paper_trading_enabled,
+    pick_paper_signal,
+    run_quick_paper_scan,
+)
 from agents.scan_pipeline import (  # noqa: E402
     SidebarControls,
     _env_int_bounded,
@@ -166,7 +180,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "chart", "description": "TradingView (tv bilan bir xil)"},
         {"command": "status", "description": "Bot, Alpaca, avto-push holati"},
         {"command": "risk", "description": "Paper risk limitlari"},
-        {"command": "paper", "description": "Alpaca paper (keyingi fazada)"},
+        {"command": "paper", "description": "Alpaca paper buyurtma"},
         {"command": "backtest", "description": "Kunlik SMA backtest: /backtest TSLA"},
     ]
     try:
@@ -361,6 +375,11 @@ def _partition_ranked(ranked: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]
 
 
 def _signal_status_badge(row: Dict[str, Any]) -> str:
+    clear = _truthy_env("TELEGRAM_CLEAR_TRADE_LABELS", default=True)
+    if clear:
+        badge = action_badge(row)
+        if badge in {"✅ KIRISH", "⏳ KUTING", "⛔ O‘TKAZ"}:
+            return badge
     aligned = int(row.get("mtf_alignment_count") or 0)
     total = int(row.get("mtf_alignment_total") or 0)
     if total >= 2 and aligned == total:
@@ -398,8 +417,10 @@ def _format_signal_line(row: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             pass
 
+    act, act_reason = classify_trade_action(row)
     lines_out = [
         f"<b>{t}</b> · {badge} · skor {score}{rvol_txt}",
+        f"<i>{_escape_html(act_reason)}</i>",
         f"AI: {dec} · {strat} · <a href=\"{tv}\">Chart</a>",
     ]
 
@@ -455,6 +476,53 @@ def _format_signal_line(row: Dict[str, Any]) -> str:
     return "\n".join(lines_out)
 
 
+def _build_action_focused_html(
+    ranked: List[Dict[str, Any]],
+    summary: Dict[str, Any],
+    *,
+    top_n: int,
+    heading: Optional[str],
+    compact: bool,
+) -> str:
+    """Trader2B: avval ✅ KIRISH, keyin ⏳ KUTING — savdoga aniq yo‘riqnoma."""
+
+    enter, wait, _skip = partition_by_action(ranked)
+    lines: List[str] = []
+    if heading:
+        lines.append(f"<b>{heading}</b>\n")
+    if not compact:
+        regime = str(summary.get("market_regime") or "").strip()
+        if regime:
+            lines.append(f"Bozor: <b>{_escape_html(regime)}</b> · ")
+        lines.append(
+            f"✅ Kirish: <b>{len(enter)}</b> · ⏳ Kutish: <b>{len(wait)}</b>\n"
+            "<i>Faqat ✅ KIRISH — KIRISH/SL/CHIQISH1/2 to‘liq; AMT BUY yoki R:R mos.</i>\n"
+        )
+        shield_line = str(summary.get("market_shield_summary_line") or "").strip()
+        if shield_line:
+            lines.append(f"<i>{_escape_html(shield_line)}</i>\n")
+    lines.append(_format_market_clock_footer())
+
+    if enter:
+        lines.append(f"<b>✅ Savdoga kirish ({min(len(enter), top_n)})</b>\n")
+        for r in enter[:top_n]:
+            lines_out = _format_signal_line(r)
+            lines.append(lines_out + "\n\n")
+    else:
+        lines.append(
+            "<b>✅ Hozir aniq kirish yo‘q</b>\n"
+            "Bozor sharoiti yoki setup tayyor emas. ⏳ KUTING ro‘yxatini kuzating.\n\n"
+        )
+
+    if wait:
+        wait_n = min(len(wait), max(3, top_n // 2))
+        lines.append(f"<b>⏳ Kutish ({wait_n})</b> <i>— hali kirmang</i>\n")
+        for r in wait[:wait_n]:
+            lines.append(_format_signal_line(r) + "\n\n")
+
+    return "".join(lines)
+
+
 def _build_scan_result_html(
     ranked: List[Dict[str, Any]],
     summary: Dict[str, Any],
@@ -463,7 +531,11 @@ def _build_scan_result_html(
     include_watchlist: bool = True,
     heading: Optional[str] = "Skan yakunlandi",
     compact: bool = False,
+    action_focused: bool = False,
 ) -> str:
+    if action_focused:
+        return _build_action_focused_html(ranked, summary, top_n=top_n, heading=heading, compact=compact)
+
     passes, watchlist = _partition_ranked(ranked)
     lines: List[str] = []
     if heading:
@@ -563,7 +635,11 @@ def _prop_scan_env() -> Iterator[None]:
         "AMT_TIMEFRAME_MINUTES": os.getenv("TRADER2B_AMT_TF", "5").strip() or "5",
         "AMT_VWAP_SCALP_ENABLED": "true",
         "SCALP_DAYTRADE_LEVELS_ENABLED": "true",
-        "INTRADAY_YAHOO_BEFORE_POLYGON": "true",
+        "TRADE_ACTIONABLE_REQUIRE_MTF_FULL": "true",
+        "TRADER2B_ACTIONABLE_ONLY": "true",
+        "TELEGRAM_CLEAR_TRADE_LABELS": "true",
+        "INTRADAY_YAHOO_BEFORE_POLYGON": "false",
+        "TELEGRAM_INTRADAY_YAHOO_FIRST": "false",
     }
     saved: dict[str, str | None] = {}
     for key, val in overrides.items():
@@ -838,8 +914,8 @@ def _execute_scan_send_persist(
         return
 
     if is_trader2b and not for_auto_push:
-        include_watchlist = True
-        scan_heading = "Trader2B · qisqa muddat (1m/5m/1H)"
+        include_watchlist = False
+        scan_heading = "Trader2B · aniq signallar (1m/5m/1H)"
     elif for_auto_push and babir_watchlist:
         include_watchlist = True
         scan_heading = "Babir market skani"
@@ -856,6 +932,7 @@ def _execute_scan_send_persist(
         top_n=top_n,
         include_watchlist=include_watchlist,
         heading=scan_heading,
+        action_focused=is_trader2b and not for_auto_push,
     )
     _send_html(token, chat_s, body, reply_markup=kb)
 
@@ -988,7 +1065,8 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
 /status — bot/worker holati va env diagnostika
 /risk — paper risk limitlari (tez ko‘rish)
-/paper — hozircha stub (Alpaca paper keyin ulanadi)
+/paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
+/paper AAPL — ticker bo‘yicha · <code>/paper go</code> — eng yaxshi paper-ready
 /backtest [TICKER] — oddiy SMA crossover MVP (yahoo kunlik; misol: <code>/backtest AAPL</code>)
 <i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
 <i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY (Pine: AMT Scalping &amp; Volume Profile).
@@ -1019,6 +1097,7 @@ def _status_html() -> str:
     ap_en = os.getenv("TELEGRAM_AUTO_PUSH_ENABLED", "false").strip().lower()
     ap_iv = os.getenv("TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES", "1440").strip()
     ap_sa = os.getenv("TELEGRAM_AUTO_PUSH_USE_SCANALL", "false").strip().lower()
+    ap_2b = os.getenv("TELEGRAM_AUTO_PUSH_USE_TRADER2B", "true").strip().lower()
     ap_at = os.getenv("TELEGRAM_AUTO_PUSH_AT", "").strip()
     ap_tz = os.getenv("TELEGRAM_AUTO_PUSH_TZ", "Asia/Tashkent").strip()
     ap_pass = os.getenv("TELEGRAM_AUTO_PUSH_PASS_ONLY", "false").strip().lower()
@@ -1035,7 +1114,7 @@ def _status_html() -> str:
         f"{ibkr_status_line()}\n"
         f"Telegram token: <b>{'OK' if tg_key_ok else 'MISSING'}</b>\n"
         f"TELEGRAM_AUTO_PUSH_ENABLED: <code>{_escape_html(ap_en)}</code> · interval_min: <code>{_escape_html(ap_iv)}</code> · "
-        f"scanall: <code>{_escape_html(ap_sa)}</code>\n"
+        f"scanall: <code>{_escape_html(ap_sa)}</code> · trader2b push: <code>{_escape_html(ap_2b)}</code>\n"
         f"TELEGRAM_AUTO_PUSH_AT: <code>{_escape_html(ap_at or '—')}</code> · TZ: <code>{_escape_html(ap_tz)}</code>\n"
         f"TELEGRAM_AUTO_PUSH_PASS_ONLY: <code>{_escape_html(ap_pass)}</code> · "
         f"BABIR_WATCHLIST: <code>{_escape_html(ap_babir)}</code>\n"
@@ -1044,6 +1123,107 @@ def _status_html() -> str:
         f"MIN_RISK_REWARD_RATIO: <code>{_escape_html(min_rr)}</code>\n"
         f"TELEGRAM_SKIP_DELETE_WEBHOOK: <code>{_escape_html(ks)}</code>\n"
     )
+
+
+def _dispatch_paper_command(token: str, chat_s: str, remainder: str, kb: Dict[str, Any]) -> None:
+    if not paper_trading_enabled():
+        _send_html(
+            token,
+            chat_s,
+            "<b>Paper savdo</b> o‘chirilgan: <code>TELEGRAM_PAPER_TRADING_ENABLED=false</code>",
+            reply_markup=kb,
+        )
+        return
+    if not alpaca_credentials_ok():
+        _send_html(
+            token,
+            chat_s,
+            "<b>Paper savdo</b>: Alpaca kalitlari yo‘q — Render/.env da <code>ALPACA_API_KEY</code> + secret.",
+            reply_markup=kb,
+        )
+        return
+
+    sub = (remainder or "").strip().lower()
+    if sub in {"help", "?"}:
+        _send_html(token, chat_s, paper_help_html(), reply_markup=kb)
+        return
+
+    def _finish(result: Dict[str, Any]) -> None:
+        _send_html(token, chat_s, format_paper_result_html(result), reply_markup=kb)
+
+    def _worker_scan() -> None:
+        try:
+            ranked, summary = run_quick_paper_scan(PROJECT_DIR)
+            sig = pick_paper_signal(ranked)
+            if not sig:
+                pr = int(summary.get("paper_ready_signals") or 0)
+                _send_html(
+                    token,
+                    chat_s,
+                    (
+                        "<b>Paper skan</b> tugadi — paper-ready signal yo‘q.\n"
+                        f"Tekshirildi: {summary.get('tickers_scanned', '—')} · paper-ready: {pr}\n"
+                        "Keyinroq <code>/scan</code> yoki boshqa ticker sinab ko‘ring."
+                    ),
+                    reply_markup=kb,
+                )
+                return
+            _finish(execute_paper_trade(sig, repo_root=PROJECT_DIR))
+        except Exception as exc:
+            _send_html(
+                token,
+                chat_s,
+                f"<b>Paper savdo</b> xato: <code>{_escape_html(str(exc)[:400])}</code>",
+                reply_markup=kb,
+            )
+
+    if sub == "scan":
+        _send_html(token, chat_s, "⏳ Qisqa skan + paper buyurtma (agar tayyor bo‘lsa)…", reply_markup=kb)
+        threading.Thread(target=_worker_scan, daemon=True, name="tg-paper-scan").start()
+        return
+
+    if sub in {"", "go", "trade", "buy"}:
+        sub = "go"
+
+    ticker: str | None = None
+    if sub not in {"go", "trade", "buy"}:
+        ticker = sub.upper()
+
+    state_path = PROJECT_DIR / "state" / "last_telegram_scan.json"
+    rows, _summary = load_last_scan_signals(state_path)
+    if not rows:
+        _send_html(
+            token,
+            chat_s,
+            "Oxirgi skan yo‘q. Avval <code>/scan</code> yoki <code>/paper scan</code> yuboring.",
+            reply_markup=kb,
+        )
+        return
+
+    sig = pick_paper_signal(rows, ticker=ticker)
+    if not sig:
+        if ticker:
+            msg = f"<code>{_escape_html(ticker)}</code> oxirgi skanda paper-ready emas."
+        else:
+            msg = "Oxirgi skanda paper-ready signal yo‘q. <code>/paper scan</code> yoki yangi <code>/scan</code>."
+        _send_html(token, chat_s, msg, reply_markup=kb)
+        return
+
+    sym = str(sig.get("ticker") or ticker or "?").upper()
+    _send_html(token, chat_s, f"⏳ Paper buyurtma: <code>{_escape_html(sym)}</code>…", reply_markup=kb)
+
+    def _worker_trade() -> None:
+        try:
+            _finish(execute_paper_trade(sig, repo_root=PROJECT_DIR))
+        except Exception as exc:
+            _send_html(
+                token,
+                chat_s,
+                f"<b>Paper savdo</b> xato: <code>{_escape_html(str(exc)[:400])}</code>",
+                reply_markup=kb,
+            )
+
+    threading.Thread(target=_worker_trade, daemon=True, name=f"tg-paper-{sym}").start()
 
 
 def main() -> None:
@@ -1274,11 +1454,7 @@ def main() -> None:
                     continue
 
                 if cmd == "paper":
-                    _send_html(
-                        token,
-                        chat_s,
-                        f"<code>/{cmd}</code> — hozircha keyingi fazada ulanadi.",
-                    )
+                    _dispatch_paper_command(token, chat_s, _remainder, kb)
                     continue
 
                 if cmd == "backtest":
