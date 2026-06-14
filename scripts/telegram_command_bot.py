@@ -375,6 +375,12 @@ def _partition_ranked(ranked: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]
 
 
 def _signal_status_badge(row: Dict[str, Any]) -> str:
+    # Watchlist / paper-ready holatlar action_badge umumiy "O'TKAZ"idan ustun: watchlist
+    # qatori kuzatuv, paper-ready esa eng kuchli signal sifatida ko'rsatiladi.
+    if row.get("watchlist_only"):
+        return "🟡 KUZATUV"
+    if bool(row.get("paper_trade_ready")):
+        return "🟢 PAPER"
     clear = _truthy_env("TELEGRAM_CLEAR_TRADE_LABELS", default=True)
     if clear:
         badge = action_badge(row)
@@ -393,10 +399,6 @@ def _signal_status_badge(row: Dict[str, Any]) -> str:
         return "⛔ NEWS_LOCK"
     if regime == "RISK_OFF":
         return "🔴 RISK_OFF"
-    if row.get("watchlist_only"):
-        return "🟡 KUZATUV"
-    if bool(row.get("paper_trade_ready")):
-        return "🟢 PAPER"
     if row.get("strategy_pass"):
         return "🔵 SIGNAL"
     return "🟡 WATCH"
