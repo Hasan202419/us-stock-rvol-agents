@@ -595,7 +595,7 @@ def _build_scan_result_html(
         lines.append("— Hozircha mos signal yo‘q. Bozor sust bo‘lishi mumkin.\n\n")
 
     if include_watchlist and watchlist:
-        lines.append(f"<b>Kuzatuv ro‘yxati</b> <i>(signal emas)</i>\n")
+        lines.append("<b>Kuzatuv ro‘yxati</b> <i>(signal emas)</i>\n")
         for r in watchlist[:top_n]:
             lines.append(_format_signal_line(r) + "\n\n")
 

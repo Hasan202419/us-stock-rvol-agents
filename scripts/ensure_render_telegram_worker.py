@@ -297,7 +297,6 @@ def _build_add_env() -> list[dict[str, str]]:
         "MARKET_SHIELD_MIN_SCORE_BULL": "70",
         "MARKET_SHIELD_MIN_SCORE_NEUTRAL": "80",
         "TELEGRAM_ALERT_TOP_N": "10",
-        "SCAN_EMPTY_WATCHLIST_TOP_N": "10",
         # Babir uslubi: worker fonida muntazam skan + ~6 ta ticker (chat: TELEGRAM_CHAT_ID yoki TELEGRAM_AUTO_PUSH_CHAT_ID .env dan).
         "TELEGRAM_AUTO_PUSH_ENABLED": "true",
         "TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES": "1440",

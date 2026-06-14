@@ -199,7 +199,7 @@ def main() -> int:
         for oid in sorted(from_services)[:15]:
             print(f"  {oid}")
         if len(from_services) > 15:
-            print(f"  …")
+            print("  …")
     elif services_count and not from_services:
         print("  [!] Servislar bor, lekin `ownerId` yo‘q — javob shakli o‘zgargan bo‘lishi mumkin.")
         if ns.debug:

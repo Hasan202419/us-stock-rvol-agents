@@ -97,7 +97,7 @@ def main() -> int:
             label = "RENDER_SERVICE_ID" if "dashboard" in want else "RENDER_WORKER_SERVICE_ID"
             print(f"{label}={by_name[want]}   # {want}")
     if "us-stock-rvol-dashboard" not in by_name and collected:
-        print(f"# Dashboard aniqlanmadi — yuqoridagi ro‘yxatdan mos srv ni tanlang.")
+        print("# Dashboard aniqlanmadi — yuqoridagi ro‘yxatdan mos srv ni tanlang.")
         print(f"RENDER_SERVICE_ID={collected[0]['id']}")
 
     return 0
