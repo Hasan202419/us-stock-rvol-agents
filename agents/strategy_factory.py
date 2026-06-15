@@ -7,13 +7,14 @@ from typing import Any, Dict
 
 from agents.market_data_agent import MarketDataAgent
 from agents.strategy_agent import StrategyAgent
+from agents.strategy_gap_and_go import GapAndGoStrategyAgent
 from agents.strategy_volume_ignition import VolumeIgnitionStrategyAgent
 from agents.strategy_vwap_breakout import VwapBreakoutStrategyAgent
 
 
 def resolve_strategy_mode(raw: str | None = None) -> str:
     mode = (raw or os.getenv("STRATEGY_MODE", "rvol")).strip().lower()
-    allowed = {"rvol", "vwap_breakout", "mtrade_high_volatility", "volume_ignition"}
+    allowed = {"rvol", "vwap_breakout", "mtrade_high_volatility", "volume_ignition", "gap_and_go"}
     return mode if mode in allowed else "rvol"
 
 
@@ -26,6 +27,7 @@ def run_stage_one_strategy(
     rvol_strategy: StrategyAgent | None = None,
     vwap_strategy: VwapBreakoutStrategyAgent | None = None,
     ignition_strategy: VolumeIgnitionStrategyAgent | None = None,
+    gap_go_strategy: GapAndGoStrategyAgent | None = None,
 ) -> Dict[str, Any]:
     if strategy_mode in {"vwap_breakout", "mtrade_high_volatility"}:
         agent = vwap_strategy or VwapBreakoutStrategyAgent()
@@ -35,6 +37,10 @@ def run_stage_one_strategy(
 
     if strategy_mode == "volume_ignition":
         agent = ignition_strategy or VolumeIgnitionStrategyAgent()
+        return agent.evaluate(rvol_snapshot, rvol_thresholds)
+
+    if strategy_mode == "gap_and_go":
+        agent = gap_go_strategy or GapAndGoStrategyAgent()
         return agent.evaluate(rvol_snapshot, rvol_thresholds)
 
     agent = rvol_strategy or StrategyAgent()

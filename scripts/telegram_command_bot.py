@@ -189,7 +189,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "status", "description": "Bot, Alpaca, avto-push holati"},
         {"command": "risk", "description": "Paper risk limitlari"},
         {"command": "paper", "description": "Alpaca paper buyurtma"},
-        {"command": "backtest", "description": "Strategiya backtest: /backtest TSLA (sma|rvol|ignition)"},
+        {"command": "backtest", "description": "Strategiya backtest: /backtest TSLA (sma|rvol|ignition|gap)"},
         {"command": "discover", "description": "Eng yaxshi sozlamani izlash (sweep)"},
     ]
     try:
@@ -236,6 +236,8 @@ def _backtest_mode_from_remainder(remainder: str) -> str:
         return "rvol"
     if any(t in {"ignition", "volume_ignition"} for t in tokens):
         return "volume_ignition"
+    if any(t in {"gap", "gapgo", "gap_go", "gap_and_go"} for t in tokens):
+        return "gap_go"
     return os.getenv("TELEGRAM_BACKTEST_STRATEGY", "volume_ignition").strip().lower()
 
 
@@ -1132,7 +1134,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
 /paper AAPL — ticker bo‘yicha · <code>/paper go</code> — eng yaxshi paper-ready
 /paper preview [TICKER] — <i>sinov</i>: sizing + risk + R:R ko‘rsatiladi, Alpaca'ga yuborilmaydi
-/backtest [TICKER] — oddiy SMA crossover MVP (yahoo kunlik; misol: <code>/backtest AAPL</code>)
+/backtest [TICKER] [sma|rvol|ignition|gap] — strategiya backtest (yahoo/IBKR kunlik; misol: <code>/backtest NVDA gap</code> — Gap-and-Go)
 <i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
 <i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY (Pine: AMT Scalping &amp; Volume Profile).
 <code>TELEGRAM_AMT_BUY_ALERT_SEPARATE=true</code> (sukut) — AMT BUY alohida Telegram xabari.

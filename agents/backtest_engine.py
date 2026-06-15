@@ -18,10 +18,11 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from agents.rvol_agent import RVOLAgent
 from agents.strategy_agent import StrategyAgent
+from agents.strategy_gap_and_go import GapAndGoStrategyAgent
 from agents.strategy_volume_ignition import VolumeIgnitionStrategyAgent
 
 # Kunlik strategiyalar (intraday/VWAP bu dvigatelga kirmaydi).
-_DAILY_MODES = {"rvol", "rvol_momentum", "volume_ignition"}
+_DAILY_MODES = {"rvol", "rvol_momentum", "volume_ignition", "gap_go", "gap_and_go"}
 
 _rvol_agent = RVOLAgent()
 
@@ -32,6 +33,8 @@ def make_strategy(strategy_mode: str) -> Any:
     mode = (strategy_mode or "rvol").strip().lower()
     if mode == "volume_ignition":
         return VolumeIgnitionStrategyAgent()
+    if mode in {"gap_go", "gap_and_go"}:
+        return GapAndGoStrategyAgent()
     return StrategyAgent()
 
 
@@ -301,11 +304,18 @@ def sweep_thresholds(
 def build_default_grid(strategy_mode: str = "volume_ignition") -> List[Dict[str, str]]:
     """Sukut parametr to‘ri (kichik, tez). Foydalanuvchi kengaytirishi mumkin."""
 
-    if (strategy_mode or "").strip().lower() == "volume_ignition":
+    mode_norm = (strategy_mode or "").strip().lower()
+    if mode_norm == "volume_ignition":
         grid: List[Dict[str, str]] = []
         for rvol in ("2.0", "2.5", "3.0"):
             for vol20 in ("1.8", "2.0", "2.5"):
                 grid.append({"IGNITION_MIN_RVOL": rvol, "IGNITION_VOL_VS_20D_AVG": vol20})
+        return grid
+    if mode_norm in {"gap_go", "gap_and_go"}:
+        grid = []
+        for gap in ("3.0", "4.0", "5.0", "7.0"):
+            for rvol in ("2.0", "2.5", "3.0"):
+                grid.append({"GAP_GO_MIN_GAP_PCT": gap, "GAP_GO_MIN_RVOL": rvol})
         return grid
     grid = []
     for rvol in ("1.3", "1.5", "2.0", "2.5"):
