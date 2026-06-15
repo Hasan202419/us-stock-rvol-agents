@@ -68,9 +68,17 @@ from agents.telegram_amt_buy import (  # noqa: E402
     format_amt_zone_inline,
 )
 from agents.simple_backtest_mvp import (  # noqa: E402
+    daily_candles_yfinance,
     daily_closes_yfinance,
     sma_crossover_long_only_backtest,
 )
+from agents.backtest_engine import (  # noqa: E402
+    build_default_grid,
+    replay_strategy,
+    summarize,
+    sweep_thresholds,
+)
+from agents.ibkr_market_data import fetch_ibkr_daily_candles, ibkr_enabled  # noqa: E402
 
 TG_API = "https://api.telegram.org"
 MAX_MESSAGE_LEN = 3800
@@ -181,7 +189,8 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "status", "description": "Bot, Alpaca, avto-push holati"},
         {"command": "risk", "description": "Paper risk limitlari"},
         {"command": "paper", "description": "Alpaca paper buyurtma"},
-        {"command": "backtest", "description": "Kunlik SMA backtest: /backtest TSLA"},
+        {"command": "backtest", "description": "Strategiya backtest: /backtest TSLA (sma|rvol|ignition)"},
+        {"command": "discover", "description": "Eng yaxshi sozlamani izlash (sweep)"},
     ]
     try:
         r = requests.post(
@@ -212,7 +221,60 @@ def _command_from_text(text: str) -> tuple[str, str]:
 
 
 def _backtest_symbol_from_remainder(remainder: str) -> str:
-    return remainder.strip().upper() or os.getenv("TELEGRAM_BACKTEST_TICKER", "SPY").strip().upper()
+    # Birinchi token = ticker; qolgan (masalan "sma"/"rvol") rejim.
+    first = remainder.strip().split()[0] if remainder.strip() else ""
+    return first.upper() or os.getenv("TELEGRAM_BACKTEST_TICKER", "SPY").strip().upper()
+
+
+def _backtest_mode_from_remainder(remainder: str) -> str:
+    """Remainder tokenlaridan rejim: sma | rvol | volume_ignition (default env)."""
+
+    tokens = [t.lower() for t in remainder.strip().split()[1:]]
+    if "sma" in tokens:
+        return "sma"
+    if "rvol" in tokens:
+        return "rvol"
+    if any(t in {"ignition", "volume_ignition"} for t in tokens):
+        return "volume_ignition"
+    return os.getenv("TELEGRAM_BACKTEST_STRATEGY", "volume_ignition").strip().lower()
+
+
+def _load_backtest_candles(symbol: str, days: int) -> list:
+    """IBKR yoqilgan bo‘lsa undan, aks holda yfinance’dan kunlik OHLCV."""
+
+    if ibkr_enabled():
+        candles = fetch_ibkr_daily_candles(symbol, days=days)
+        if candles:
+            return candles
+    return daily_candles_yfinance(symbol, days)
+
+
+def _format_strategy_backtest_html(symbol: str, strategy: str, bars: int, horizon: int, summary: Dict[str, Any]) -> str:
+    """replay+summarize natijasini HTML hisobot qiladi."""
+
+    if summary.get("trades", 0) == 0:
+        return (
+            f"<b>Backtest</b> <code>{_escape_html(symbol)}</code> · {_escape_html(strategy)}\n"
+            f"Barlar: {bars} · gorizont: {horizon}\n"
+            f"<i>Signal topilmadi — thresholdlar qattiq yoki tarix qisqa.</i>"
+        )
+    lines = [
+        f"<b>Backtest</b> <code>{_escape_html(symbol)}</code> · {_escape_html(strategy)}",
+        f"Barlar: {bars} · gorizont: {horizon} bar",
+        f"Signallar: <b>{summary['trades']}</b> · Win-rate: <b>{summary['win_rate_pct']}%</b>",
+        f"O‘rtacha R: <b>{summary['avg_r']}</b> · Expectancy: <b>{summary['expectancy_r']}R</b>",
+        f"O‘rtacha qaytish: {summary['avg_return_pct']}%",
+    ]
+    by_stage = summary.get("by_stage") or {}
+    if by_stage:
+        seg = " · ".join(f"{_escape_html(k)}: {v['win_rate_pct']}% ({v['n']})" for k, v in by_stage.items())
+        lines.append(f"Bosqich: {seg}")
+    by_prob = summary.get("by_probability") or {}
+    if by_prob:
+        seg = " · ".join(f"{_escape_html(k)}: {v['win_rate_pct']}% ({v['n']})" for k, v in by_prob.items())
+        lines.append(f"Davom ehtimoli: {seg}")
+    lines.append("<i>O‘tmish natija — kelajak kafolati emas.</i>")
+    return "\n".join(lines)
 
 
 def _html_plan_from_last_scan(ticker_filter: str) -> str:
@@ -1461,46 +1523,64 @@ def main() -> None:
 
                 if cmd == "backtest":
                     sym_bt = _backtest_symbol_from_remainder(_remainder)
+                    mode_bt = _backtest_mode_from_remainder(_remainder)
                     lookback = _env_int_bounded("TELEGRAM_BACKTEST_LOOKBACK_DAYS", 400, 120, 800)
-                    fast_bt = _env_int_bounded("TELEGRAM_BACKTEST_FAST_SMA", 10, 2, 200)
-                    slow_bt = _env_int_bounded("TELEGRAM_BACKTEST_SLOW_SMA", 30, 3, 400)
-                    if slow_bt <= fast_bt:
-                        slow_bt = fast_bt + 20
+                    horizon_bt = _env_int_bounded("BACKTEST_HORIZON_BARS", 10, 2, 60)
 
                     def _backtest_worker() -> None:
-                        closes_bt = daily_closes_yfinance(sym_bt, lookback)
-                        if not closes_bt:
+                        if mode_bt == "sma":
+                            fast_bt = _env_int_bounded("TELEGRAM_BACKTEST_FAST_SMA", 10, 2, 200)
+                            slow_bt = _env_int_bounded("TELEGRAM_BACKTEST_SLOW_SMA", 30, 3, 400)
+                            if slow_bt <= fast_bt:
+                                slow_bt = fast_bt + 20
+                            closes_bt = daily_closes_yfinance(sym_bt, lookback)
+                            if not closes_bt:
+                                _send_html(token, chat_s, "<b>Backtest</b>: tarix chiqmadi.", reply_markup=kb)
+                                return
+                            res = sma_crossover_long_only_backtest(closes_bt, fast=fast_bt, slow=slow_bt)
+                            if not res.get("ok"):
+                                _send_html(
+                                    token,
+                                    chat_s,
+                                    f"<b>Backtest</b> <code>{_escape_html(sym_bt)}</code>: ma’lumot yetarli emas.",
+                                    reply_markup=kb,
+                                )
+                                return
+                            out = (
+                                f"<b>Backtest MVP (SMA)</b> <code>{_escape_html(sym_bt)}</code>\n"
+                                f"Kunlar: {len(closes_bt)} · SMA {fast_bt}/{slow_bt}\n"
+                                f"Strategiya jami: <b>{res.get('strategy_total_return_pct')}%</b> "
+                                f"(long barlar: {res.get('bars_in_long')})\n"
+                                f"Buy-hold: <b>{res.get('buy_hold_from_warmup_pct')}%</b>"
+                            )
+                            _send_html(token, chat_s, out, reply_markup=kb)
+                            return
+
+                        candles_bt = _load_backtest_candles(sym_bt, lookback)
+                        if not candles_bt:
                             _send_html(
                                 token,
                                 chat_s,
-                                "<b>Backtest</b>: tarix chiqmadi — tarmoq yoki <code>yfinance</code> ni tekshiring.",
+                                "<b>Backtest</b>: tarix chiqmadi — IBKR Gateway yoki <code>yfinance</code> ni tekshiring.",
                                 reply_markup=kb,
                             )
                             return
-                        res = sma_crossover_long_only_backtest(closes_bt, fast=fast_bt, slow=slow_bt)
-                        if not res.get("ok"):
-                            _send_html(
-                                token,
-                                chat_s,
-                                f"<b>Backtest</b> <code>{_escape_html(sym_bt)}</code>: ma’lumot yetarli emas "
-                                f"(bars={res.get('bars')}, fast/slow={fast_bt}/{slow_bt}).",
-                                reply_markup=kb,
-                            )
-                            return
-                        out = (
-                            f"<b>Backtest MVP</b> <code>{_escape_html(sym_bt)}</code>\n"
-                            f"Kunlar: {len(closes_bt)} · SMA {fast_bt}/{slow_bt}\n"
-                            f"Strategiya jami: <b>{res.get('strategy_total_return_pct')}%</b> "
-                            f"(long barlar: {res.get('bars_in_long')})\n"
-                            f"Buy-hold (warmup dan): <b>{res.get('buy_hold_from_warmup_pct')}%</b>\n"
-                            f"<i>{_escape_html(res.get('rule'))}</i>"
+                        avg_win = _env_int_bounded("BACKTEST_AVG_VOL_WINDOW", 20, 5, 60)
+                        trades_bt = replay_strategy(
+                            candles_bt, mode_bt, ticker=sym_bt, horizon=horizon_bt, avg_window=avg_win
                         )
-                        _send_html(token, chat_s, out, reply_markup=kb)
+                        summary_bt = summarize(trades_bt)
+                        _send_html(
+                            token,
+                            chat_s,
+                            _format_strategy_backtest_html(sym_bt, mode_bt, len(candles_bt), horizon_bt, summary_bt),
+                            reply_markup=kb,
+                        )
 
                     _send_html(
                         token,
                         chat_s,
-                        f"⏳ Backtest <code>{_escape_html(sym_bt)}</code> hisoblanmoqda…",
+                        f"⏳ Backtest <code>{_escape_html(sym_bt)}</code> · {_escape_html(mode_bt)} hisoblanmoqda…",
                         reply_markup=kb,
                     )
                     threading.Thread(
@@ -1508,6 +1588,47 @@ def main() -> None:
                         daemon=True,
                         name=f"tg-backtest-{sym_bt}",
                     ).start()
+                    continue
+
+                if cmd == "discover":
+                    strat_disc = os.getenv("TELEGRAM_BACKTEST_STRATEGY", "volume_ignition").strip().lower()
+                    lookback_d = _env_int_bounded("TELEGRAM_BACKTEST_LOOKBACK_DAYS", 400, 120, 800)
+                    horizon_d = _env_int_bounded("BACKTEST_HORIZON_BARS", 10, 2, 60)
+                    raw_tickers = os.getenv("BACKTEST_SWEEP_TICKERS", "AAPL,NVDA,TSLA,AMD,MSFT").strip()
+                    tickers_d = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()][:12]
+
+                    def _discover_worker() -> None:
+                        candles_by: Dict[str, Any] = {}
+                        for sym in tickers_d:
+                            c = _load_backtest_candles(sym, lookback_d)
+                            if c:
+                                candles_by[sym] = c
+                        if not candles_by:
+                            _send_html(token, chat_s, "<b>Discover</b>: tarix chiqmadi.", reply_markup=kb)
+                            return
+                        grid = build_default_grid(strat_disc)
+                        ranked = sweep_thresholds(
+                            candles_by, grid, strategy_mode=strat_disc, horizon=horizon_d
+                        )
+                        lines = [
+                            f"<b>Strategiya izlash</b> · {_escape_html(strat_disc)}",
+                            f"Tickerlar: {len(candles_by)} · kombinatsiya: {len(grid)}",
+                            "",
+                            "<b>Top 3 sozlama (expectancy):</b>",
+                        ]
+                        for idx, r in enumerate(ranked[:3], start=1):
+                            params = " ".join(f"{k}={v}" for k, v in (r.get("params") or {}).items())
+                            lines.append(
+                                f"{idx}) <code>{_escape_html(params)}</code> — "
+                                f"exp <b>{r.get('expectancy_r')}R</b>, win {r.get('win_rate_pct')}%, "
+                                f"n={r.get('trades')}"
+                            )
+                        lines.append("")
+                        lines.append("<i>Eng yaxshisini .env ga qo‘ying. O‘tmish — kafolat emas.</i>")
+                        _send_html(token, chat_s, "\n".join(lines), reply_markup=kb)
+
+                    _send_html(token, chat_s, "⏳ Strategiya izlanmoqda (sweep)…", reply_markup=kb)
+                    threading.Thread(target=_discover_worker, daemon=True, name="tg-discover").start()
                     continue
 
                 _send_html(
