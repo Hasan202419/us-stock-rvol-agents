@@ -134,22 +134,34 @@ def execute_paper_trade(
     signal: Dict[str, Any],
     *,
     repo_root: Path,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
+    """Paper buyurtma. `dry_run=True` — sizing + risk + buyurtma quriladi, lekin Alpaca'ga
+    YUBORILMAYDI (jonli oqimni xavfsiz sinash uchun)."""
+
     agents = build_scan_agents(repo_root)
     ticker = str(signal.get("ticker") or "?").upper()
     analyst_view = analyst_view_from_signal(signal)
     order, quantity, sizing_note = build_order_from_signal(signal, agents["risk"])
     approved, risk_reason = agents["risk"].approve_order(signal, analyst_view, order)
 
+    price = float(signal.get("price") or 0)
+    risk_per_share = max(0.0, price - float(order["stop_loss"])) if price else 0.0
+    reward_per_share = max(0.0, float(order["take_profit"]) - price) if price else 0.0
     result: Dict[str, Any] = {
         "ticker": ticker,
         "quantity": quantity,
         "stop_loss": order["stop_loss"],
         "take_profit": order["take_profit"],
-        "price": float(signal.get("price") or 0),
+        "price": price,
         "risk_approved": approved,
         "risk_reason": risk_reason,
         "sizing_note": sizing_note,
+        "dry_run": bool(dry_run),
+        "notional": round(price * quantity, 2) if price else 0.0,
+        "est_risk_usd": round(risk_per_share * quantity, 2),
+        "est_reward_usd": round(reward_per_share * quantity, 2),
+        "rr_ratio": round(reward_per_share / risk_per_share, 2) if risk_per_share > 0 else 0.0,
         "paper_trade_ready": bool(signal.get("paper_trade_ready")),
         "paper_trade_block_reason": str(signal.get("paper_trade_block_reason") or ""),
     }
@@ -158,6 +170,15 @@ def execute_paper_trade(
         result["submitted"] = False
         result["status"] = "BLOCKED"
         result["message"] = risk_reason
+        return result
+
+    if dry_run:
+        result["submitted"] = False
+        result["status"] = "DRY_RUN"
+        result["message"] = (
+            "Sinov (dry-run): buyurtma Alpaca'ga yuborilmadi. "
+            "Haqiqiy yuborish uchun: /paper go yoki /paper " + ticker
+        )
         return result
 
     trade_result = agents["trader"].submit_order(
@@ -198,8 +219,9 @@ def format_paper_result_html(result: Dict[str, Any]) -> str:
     t = result.get("ticker", "?")
     status = result.get("status", "—")
     submitted = result.get("submitted")
+    title = "Paper sinov (dry-run)" if result.get("dry_run") else "Paper savdo"
     lines = [
-        f"<b>Paper savdo</b> · <code>{t}</code>",
+        f"<b>{title}</b> · <code>{t}</code>",
         f"Holat: <b>{status}</b> · yuborildi: <code>{'ha' if submitted else 'yo‘q'}</code>",
     ]
     if result.get("quantity"):
@@ -207,6 +229,15 @@ def format_paper_result_html(result: Dict[str, Any]) -> str:
             f"Miqdor: <code>{result.get('quantity')}</code> · SL <code>{result.get('stop_loss')}</code> "
             f"· TP <code>{result.get('take_profit')}</code>"
         )
+        notional = result.get("notional")
+        rr = result.get("rr_ratio")
+        if notional:
+            risk_usd = result.get("est_risk_usd")
+            reward_usd = result.get("est_reward_usd")
+            lines.append(
+                f"Hajm: <code>${notional}</code> · risk <code>${risk_usd}</code> "
+                f"· reward <code>${reward_usd}</code> · R:R <code>{rr}</code>"
+            )
     if result.get("order_id"):
         lines.append(f"Alpaca order: <code>{result.get('order_id')}</code>")
     if result.get("alpaca_poll_status"):
@@ -230,6 +261,8 @@ def paper_help_html() -> str:
         "• <code>/paper</code> yoki <code>/paper go</code> — oxirgi skandagi eng yaxshi paper-ready signal\n"
         "• <code>/paper AAPL</code> — shu ticker (oxirgi skan)\n"
         "• <code>/paper scan</code> — qisqa skan (~80 ticker), keyin paper-ready bo‘lsa buyurtma\n"
+        "• <code>/paper preview</code> yoki <code>/paper preview AAPL</code> — <b>sinov</b>: sizing+risk+R:R "
+        "ko‘rsatiladi, lekin Alpaca'ga yuborilmaydi\n"
         "RiskManager + AI ruxsati shart; blok bo‘lsa sabab chiqadi.\n"
         "<code>TELEGRAM_PAPER_TRADING_ENABLED=false</code> — o‘chirish."
     )

@@ -1131,6 +1131,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /risk — paper risk limitlari (tez ko‘rish)
 /paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
 /paper AAPL — ticker bo‘yicha · <code>/paper go</code> — eng yaxshi paper-ready
+/paper preview [TICKER] — <i>sinov</i>: sizing + risk + R:R ko‘rsatiladi, Alpaca'ga yuborilmaydi
 /backtest [TICKER] — oddiy SMA crossover MVP (yahoo kunlik; misol: <code>/backtest AAPL</code>)
 <i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
 <i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY (Pine: AMT Scalping &amp; Volume Profile).
@@ -1207,10 +1208,19 @@ def _dispatch_paper_command(token: str, chat_s: str, remainder: str, kb: Dict[st
         )
         return
 
-    sub = (remainder or "").strip().lower()
+    raw = (remainder or "").strip()
+    sub = raw.lower()
     if sub in {"help", "?"}:
         _send_html(token, chat_s, paper_help_html(), reply_markup=kb)
         return
+
+    # preview/dry: sizing+risk hisoblanadi, lekin Alpaca'ga yuborilmaydi.
+    dry_run = False
+    tokens = raw.split()
+    if tokens and tokens[0].lower() in {"preview", "dry", "dryrun"}:
+        dry_run = True
+        raw = " ".join(tokens[1:]).strip()
+        sub = raw.lower()
 
     def _finish(result: Dict[str, Any]) -> None:
         _send_html(token, chat_s, format_paper_result_html(result), reply_markup=kb)
@@ -1232,7 +1242,7 @@ def _dispatch_paper_command(token: str, chat_s: str, remainder: str, kb: Dict[st
                     reply_markup=kb,
                 )
                 return
-            _finish(execute_paper_trade(sig, repo_root=PROJECT_DIR))
+            _finish(execute_paper_trade(sig, repo_root=PROJECT_DIR, dry_run=dry_run))
         except Exception as exc:
             _send_html(
                 token,
@@ -1274,11 +1284,12 @@ def _dispatch_paper_command(token: str, chat_s: str, remainder: str, kb: Dict[st
         return
 
     sym = str(sig.get("ticker") or ticker or "?").upper()
-    _send_html(token, chat_s, f"⏳ Paper buyurtma: <code>{_escape_html(sym)}</code>…", reply_markup=kb)
+    label = "Paper sinov (dry-run)" if dry_run else "Paper buyurtma"
+    _send_html(token, chat_s, f"⏳ {label}: <code>{_escape_html(sym)}</code>…", reply_markup=kb)
 
     def _worker_trade() -> None:
         try:
-            _finish(execute_paper_trade(sig, repo_root=PROJECT_DIR))
+            _finish(execute_paper_trade(sig, repo_root=PROJECT_DIR, dry_run=dry_run))
         except Exception as exc:
             _send_html(
                 token,
