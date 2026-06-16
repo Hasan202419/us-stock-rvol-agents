@@ -197,6 +197,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "paper", "description": "Alpaca paper buyurtma"},
         {"command": "backtest", "description": "Strategiya backtest: /backtest TSLA (sma|rvol|ignition|gap)"},
         {"command": "discover", "description": "Eng yaxshi sozlamani izlash (sweep)"},
+        {"command": "scalp", "description": "Skalp/day-trade skaner (yfinance) — RVOL + gap + TradingView"},
     ]
     try:
         r = requests.post(
@@ -1251,6 +1252,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
 /paper AAPL — ticker bo‘yicha · <code>/paper go</code> — eng yaxshi paper-ready
 /paper preview [TICKER] — <i>sinov</i>: sizing + risk + R:R ko‘rsatiladi, Alpaca'ga yuborilmaydi
+/scalp [TICKER ...] — <b>skalp/day-trade skaner</b>: yfinance orqali RVOL + gap + momentum bo'yicha top nomzodlar · har birida Entry/SL/TP + <a href="https://www.tradingview.com/chart/">TradingView</a> havolasi. Ixtiyoriy: <code>/scalp AAPL NVDA AMD</code> (maxsus tickers). Env: <code>SCALP_UNIVERSE</code>, <code>SCALP_SCREEN_TOP_N</code> (sukut 8), <code>SCALP_MIN_RVOL</code> (sukut 1.5).
 /backtest [TICKER] [sma|rvol|ignition|gap] — strategiya backtest (yahoo/IBKR kunlik; misol: <code>/backtest NVDA gap</code> — Gap-and-Go)
 <i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
 <i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY (Pine: AMT Scalping &amp; Volume Profile).
@@ -1532,6 +1534,55 @@ def _dispatch_paper_command(token: str, chat_s: str, remainder: str, kb: Dict[st
             )
 
     threading.Thread(target=_worker_trade, daemon=True, name=f"tg-paper-{sym}").start()
+
+
+def _dispatch_scalp_command(token: str, chat_s: str, remainder: str, kb: Dict[str, Any]) -> None:
+    """/scalp [TICKER ...] — yfinance RVOL+gap screener, TradingView havolasi bilan."""
+    from agents.yfinance_screener import format_scalp_html, screen_scalp_candidates
+
+    tickers_override: Optional[List[str]] = None
+    if remainder.strip():
+        tickers_override = [t.strip().upper() for t in remainder.strip().split() if t.strip()]
+
+    top_n = _env_int_bounded("SCALP_SCREEN_TOP_N", 8, 1, 20)
+    try:
+        min_rvol = max(0.5, float(os.getenv("SCALP_MIN_RVOL", "1.5")))
+    except ValueError:
+        min_rvol = 1.5
+    try:
+        min_price = max(1.0, float(os.getenv("SCALP_MIN_PRICE", "5.0")))
+    except ValueError:
+        min_price = 5.0
+
+    what = f"({len(tickers_override)} ticker)" if tickers_override else "(yfinance universe)"
+    _send_html(token, chat_s, f"⏳ Skalp skaner ishlamoqda {what}…", reply_markup=kb)
+
+    def _scalp_worker() -> None:
+        try:
+            candidates = screen_scalp_candidates(
+                universe=tickers_override,
+                min_rvol=min_rvol,
+                min_price=min_price,
+                top_n=top_n,
+                delay_sec=0.15,
+            )
+            _send_html(
+                token,
+                chat_s,
+                format_scalp_html(candidates),
+                reply_markup=kb,
+                disable_preview=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"telegram_command_bot scalp_worker error: {exc}", flush=True)
+            _send_html(
+                token,
+                chat_s,
+                f"<b>Skalp xato</b>: <code>{_escape_html(str(exc)[:300])}</code>",
+                reply_markup=kb,
+            )
+
+    threading.Thread(target=_scalp_worker, daemon=True, name="tg-scalp").start()
 
 
 def main() -> None:
@@ -1928,10 +1979,14 @@ def main() -> None:
                     threading.Thread(target=_discover_worker, daemon=True, name="tg-discover").start()
                     continue
 
+                if cmd == "scalp":
+                    _dispatch_scalp_command(token, chat_s, _remainder, kb)
+                    continue
+
                 _send_html(
                     token,
                     chat_s,
-                    "Noma'lum buyruq. /help uchun ro‘yxat.",
+                    "Noma’lum buyruq. /help uchun ro’yxat.",
                 )
             except Exception as exc:  # noqa: BLE001
                 print(f"telegram_command_bot command error ({cmd or 'unknown'}): {exc}", flush=True)
