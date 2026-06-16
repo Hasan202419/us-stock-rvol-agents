@@ -79,6 +79,7 @@ from agents.backtest_engine import (  # noqa: E402
     sweep_thresholds,
 )
 from agents.ibkr_market_data import fetch_ibkr_daily_candles, ibkr_enabled  # noqa: E402
+from agents.signal_chart import chart_caption, render_signal_chart  # noqa: E402
 
 TG_API = "https://api.telegram.org"
 MAX_MESSAGE_LEN = 3800
@@ -184,8 +185,8 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "scan2b", "description": "Trader2B ro‘yxati · 1m/5m/1H qisqa muddat"},
         {"command": "signals", "description": "Oxirgi /scan qisqa natijasi"},
         {"command": "plan", "description": "Trade plan: /plan yoki /plan AAPL"},
-        {"command": "tv", "description": "TradingView: /tv AAPL"},
-        {"command": "chart", "description": "TradingView (tv bilan bir xil)"},
+        {"command": "tv", "description": "TradingView link: /tv AAPL"},
+        {"command": "chart", "description": "Chizilgan grafik rasm: /chart AAPL (Entry/SL/TP + zonalar)"},
         {"command": "status", "description": "Bot, Alpaca, avto-push holati"},
         {"command": "risk", "description": "Paper risk limitlari"},
         {"command": "paper", "description": "Alpaca paper buyurtma"},
@@ -360,6 +361,69 @@ def _send_html(
                 print(f"telegram_command_bot sendMessage error: {response.status_code} {response.text[:300]}", flush=True)
         except requests.RequestException as exc:
             print(f"telegram_command_bot sendMessage request failed: {exc}", flush=True)
+
+
+def _send_photo(
+    token: str,
+    chat_id: str,
+    png: bytes,
+    caption: str,
+    *,
+    reply_markup: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Telegram sendPhoto (multipart). Caption ≤1024 belgi. Muvaffaqiyatda True."""
+
+    data: Dict[str, Any] = {"chat_id": chat_id, "caption": caption[:1024], "parse_mode": "HTML"}
+    if reply_markup is not None:
+        data["reply_markup"] = json.dumps(reply_markup)
+    try:
+        r = requests.post(
+            f"{TG_API}/bot{token}/sendPhoto",
+            data=data,
+            files={"photo": ("signal.png", png, "image/png")},
+            timeout=60,
+        )
+        if not r.ok:
+            print(f"telegram_command_bot sendPhoto error: {r.status_code} {r.text[:300]}", flush=True)
+        return r.ok
+    except requests.RequestException as exc:
+        print(f"telegram_command_bot sendPhoto failed: {exc}", flush=True)
+        return False
+
+
+def _load_chart_candles(row: Dict[str, Any], ticker: str) -> List[Dict[str, Any]]:
+    """Grafik uchun candles: avval saqlangan signaldan, bo'lmasa jonli MarketData (Render)."""
+
+    candles = row.get("candles") if isinstance(row, dict) else None
+    if isinstance(candles, list) and len(candles) >= 2:
+        return candles
+    try:
+        from agents.market_data_agent import MarketDataAgent
+
+        rec = MarketDataAgent().fetch_market_data(ticker)
+        fetched = rec.get("candles") if isinstance(rec, dict) else None
+        return fetched if isinstance(fetched, list) else []
+    except Exception as exc:  # noqa: BLE001
+        print(f"telegram_command_bot chart candles fetch error: {exc}", flush=True)
+        return []
+
+
+def _signal_row_for_ticker(ticker: str) -> Dict[str, Any]:
+    """Oxirgi skandan ticker bo'yicha signal qatori (yo'q bo'lsa minimal stub)."""
+
+    path = PROJECT_DIR / "state" / "last_telegram_scan.json"
+    if path.is_file():
+        try:
+            blob = json.loads(path.read_text(encoding="utf-8"))
+            rows = blob.get("top_signals") or []
+            if isinstance(rows, list):
+                want = ticker.strip().upper()
+                for r in rows:
+                    if isinstance(r, dict) and str(r.get("ticker", "")).upper() == want:
+                        return r
+        except json.JSONDecodeError:
+            pass
+    return {"ticker": ticker.strip().upper()}
 
 
 def _escape_html(s: Any) -> str:
@@ -1129,6 +1193,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 <code>TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST=true</code> (sukut) — avto-pushda kuzatuv bo‘limi.
 <i>Pastki menyu:</i> 📊 Skan, 📋 Signallar va boshqalar — chat pastidagi tugmalar.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
+/chart [TICKER] — <b>chizilgan grafik rasm</b>: svecha + hajm + Entry/SL/TP + qo‘llab-quvvatlash/qarshilik zonalari (oxirgi skan darajalaridan)
 /status — bot/worker holati va env diagnostika
 /risk — paper risk limitlari (tez ko‘rish)
 /paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
@@ -1512,7 +1577,7 @@ def main() -> None:
                         )
                     continue
 
-                if cmd in {"tv", "chart"}:
+                if cmd == "tv":
                     sym_raw = (_remainder or "").strip().upper()
                     if not sym_raw:
                         sym_raw = os.getenv("TELEGRAM_DEFAULT_CHART_SYMBOL", "AAPL").strip().upper()
@@ -1528,6 +1593,55 @@ def main() -> None:
                         ),
                         disable_preview=False,
                     )
+                    continue
+
+                if cmd == "chart":
+                    sym_raw = (_remainder or "").strip().upper()
+                    if not sym_raw:
+                        sym_raw = os.getenv("TELEGRAM_DEFAULT_CHART_SYMBOL", "AAPL").strip().upper()
+                    sym_chart = sym_raw.split(":", 1)[-1]  # NASDAQ:AAPL -> AAPL
+                    _send_html(
+                        token,
+                        chat_s,
+                        f"⏳ Grafik chizilmoqda: <code>{_escape_html(sym_chart)}</code>…",
+                        reply_markup=kb,
+                    )
+
+                    def _chart_worker(sym: str = sym_chart) -> None:
+                        link = _tradingview_url(sym)
+                        try:
+                            row = _signal_row_for_ticker(sym)
+                            candles = _load_chart_candles(row, sym)
+                            png = render_signal_chart(row, candles)
+                            if png:
+                                caption = (
+                                    f"{chart_caption(row)}\n<a href=\"{link}\">TradingView</a>"
+                                )
+                                if _send_photo(token, chat_s, png, caption, reply_markup=kb):
+                                    return
+                            _send_html(
+                                token,
+                                chat_s,
+                                (
+                                    f"<b>Grafik</b> <code>{_escape_html(sym)}</code> — rasm uchun ma'lumot yo‘q "
+                                    f"(avval <code>/scan</code> yoki manba ulanishini tekshiring).\n"
+                                    f"<a href=\"{link}\">TradingView</a>"
+                                ),
+                                disable_preview=False,
+                                reply_markup=kb,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"telegram_command_bot chart worker error: {exc}", flush=True)
+                            _send_html(
+                                token,
+                                chat_s,
+                                f"<b>Grafik xato</b>: <code>{_escape_html(str(exc)[:300])}</code>\n"
+                                f"<a href=\"{link}\">TradingView</a>",
+                                disable_preview=False,
+                                reply_markup=kb,
+                            )
+
+                    threading.Thread(target=_chart_worker, daemon=True, name=f"tg-chart-{sym_chart}").start()
                     continue
 
                 if cmd == "paper":
