@@ -80,6 +80,10 @@ from agents.backtest_engine import (  # noqa: E402
 )
 from agents.ibkr_market_data import fetch_ibkr_daily_candles, ibkr_enabled  # noqa: E402
 from agents.signal_chart import chart_caption, render_signal_chart  # noqa: E402
+from agents.bullish_buy_signal import (  # noqa: E402
+    evaluate_bullish_buy,
+    format_bullish_buy_report,
+)
 
 TG_API = "https://api.telegram.org"
 MAX_MESSAGE_LEN = 3800
@@ -189,6 +193,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "chart", "description": "Chizilgan grafik rasm: /chart AAPL (Entry/SL/TP + zonalar)"},
         {"command": "status", "description": "Bot, Alpaca, avto-push holati"},
         {"command": "risk", "description": "Paper risk limitlari"},
+        {"command": "buy", "description": "BUY signal: /buy AAPL — aniq SOTIB OL/KUTING/O‘TKAZ + savdo rejasi"},
         {"command": "paper", "description": "Alpaca paper buyurtma"},
         {"command": "backtest", "description": "Strategiya backtest: /backtest TSLA (sma|rvol|ignition|gap)"},
         {"command": "discover", "description": "Eng yaxshi sozlamani izlash (sweep)"},
@@ -1242,6 +1247,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 <i>Avto-grafik:</i> <code>TELEGRAM_SCAN_CHART_TOP_N=3</code> (sukut 0=o‘chiq, 0…10) — har <code>/scan</code> dan keyin top signallarga grafik rasm avtomatik biriktiriladi.
 /status — bot/worker holati va env diagnostika
 /risk — paper risk limitlari (tez ko‘rish)
+/buy [TICKER] — <b>aniq BUY signal</b>: 🟢 SOTIB OL / 🟡 KUTING / 🔴 O‘TKAZ + ishonch% + professional savdo rejasi (Entry/SL/Target/R:R/pozitsiya). <code>/buy AAPL</code> yoki <code>/buy</code> (eng yaxshi BUY) — hajmga asoslangan (volume ignition) mezonlar.
 /paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
 /paper AAPL — ticker bo‘yicha · <code>/paper go</code> — eng yaxshi paper-ready
 /paper preview [TICKER] — <i>sinov</i>: sizing + risk + R:R ko‘rsatiladi, Alpaca'ga yuborilmaydi
@@ -1301,6 +1307,120 @@ def _status_html() -> str:
         f"MIN_RISK_REWARD_RATIO: <code>{_escape_html(min_rr)}</code>\n"
         f"TELEGRAM_SKIP_DELETE_WEBHOOK: <code>{_escape_html(ks)}</code>\n"
     )
+
+
+def _buy_signal_for_ticker(ticker: str) -> Optional[Dict[str, Any]]:
+    """BUY baholash uchun signal: oxirgi skandan yoki jonli MarketData+RVOL (Render)."""
+
+    want = ticker.strip().upper()
+    path = PROJECT_DIR / "state" / "last_telegram_scan.json"
+    if path.is_file():
+        try:
+            blob = json.loads(path.read_text(encoding="utf-8"))
+            rows = blob.get("top_signals") or []
+            if isinstance(rows, list):
+                for r in rows:
+                    if isinstance(r, dict) and str(r.get("ticker", "")).upper() == want:
+                        if isinstance(r.get("candles"), list) and len(r["candles"]) >= 2:
+                            return r
+        except json.JSONDecodeError:
+            pass
+    try:
+        from agents.market_data_agent import MarketDataAgent
+        from agents.rvol_agent import RVOLAgent
+
+        rec = MarketDataAgent().fetch_market_data(want)
+        if not isinstance(rec, dict) or not rec.get("candles"):
+            return None
+        rec.setdefault("ticker", want)
+        return RVOLAgent().calculate(rec)
+    except Exception as exc:  # noqa: BLE001
+        print(f"telegram_command_bot buy signal fetch error ({want}): {exc}", flush=True)
+        return None
+
+
+def _dispatch_buy_command(token: str, chat_s: str, remainder: str, kb: Dict[str, Any]) -> None:
+    """/buy [TICKER] — qatʼiy BUY/WATCH/AVOID verdikti + professional savdo rejasi."""
+
+    sub = (remainder or "").strip()
+
+    def _finish_for(sig: Dict[str, Any]) -> None:
+        res = evaluate_bullish_buy(sig)
+        company = str(sig.get("company_name") or sig.get("company") or "")
+        _send_html(token, chat_s, format_bullish_buy_report(res, company=company), reply_markup=kb)
+        try:
+            png = render_signal_chart(res.get("_signal") or sig, (res.get("_signal") or sig).get("candles"))
+            if png:
+                _send_photo(token, chat_s, png, f"{res['ticker']} · {res['verdict']}", reply_markup=kb)
+        except Exception as exc:  # noqa: BLE001
+            print(f"telegram_command_bot buy chart error: {exc}", flush=True)
+
+    if sub and sub.lower() not in {"go", "top", "best"}:
+        ticker = sub.split()[0].upper()
+        _send_html(token, chat_s, f"⏳ BUY tahlil: <code>{_escape_html(ticker)}</code>…", reply_markup=kb)
+
+        def _worker(t: str = ticker) -> None:
+            sig = _buy_signal_for_ticker(t)
+            if not sig:
+                _send_html(
+                    token,
+                    chat_s,
+                    f"<code>{_escape_html(t)}</code> uchun maʼlumot yoʻq — avval <code>/scan</code> "
+                    "yoki manba ulanishini tekshiring.",
+                    reply_markup=kb,
+                )
+                return
+            _finish_for(sig)
+
+        threading.Thread(target=_worker, daemon=True, name=f"tg-buy-{ticker}").start()
+        return
+
+    # Tickersiz: oxirgi skandagi eng yaxshi BUY ni topamiz.
+    path = PROJECT_DIR / "state" / "last_telegram_scan.json"
+    rows: List[Dict[str, Any]] = []
+    if path.is_file():
+        try:
+            blob = json.loads(path.read_text(encoding="utf-8"))
+            raw = blob.get("top_signals") or []
+            rows = [r for r in raw if isinstance(r, dict)]
+        except json.JSONDecodeError:
+            rows = []
+    if not rows:
+        _send_html(
+            token,
+            chat_s,
+            "Oxirgi skan yoʻq. <code>/scan</code> yoki <code>/buy AAPL</code> yuboring.",
+            reply_markup=kb,
+        )
+        return
+
+    _send_html(token, chat_s, "⏳ Eng yaxshi BUY signal izlanmoqda…", reply_markup=kb)
+
+    def _worker_top() -> None:
+        scored = []
+        for r in rows:
+            if not (isinstance(r.get("candles"), list) and len(r["candles"]) >= 2):
+                continue
+            res = evaluate_bullish_buy(r)
+            scored.append((res, r))
+        buys = [(res, r) for res, r in scored if res["verdict"] == "BUY"]
+        buys.sort(key=lambda x: x[0]["confidence"], reverse=True)
+        if buys:
+            _finish_for(buys[0][1])
+            return
+        if scored:
+            scored.sort(key=lambda x: x[0]["confidence"], reverse=True)
+            _send_html(
+                token,
+                chat_s,
+                "Aniq <b>BUY</b> yoʻq — eng kuchli nomzod (KUTING):",
+                reply_markup=kb,
+            )
+            _finish_for(scored[0][1])
+            return
+        _send_html(token, chat_s, "Grafik/candles bor signal topilmadi. Avval <code>/scan</code>.", reply_markup=kb)
+
+    threading.Thread(target=_worker_top, daemon=True, name="tg-buy-top").start()
 
 
 def _dispatch_paper_command(token: str, chat_s: str, remainder: str, kb: Dict[str, Any]) -> None:
@@ -1688,6 +1808,10 @@ def main() -> None:
                             )
 
                     threading.Thread(target=_chart_worker, daemon=True, name=f"tg-chart-{sym_chart}").start()
+                    continue
+
+                if cmd == "buy":
+                    _dispatch_buy_command(token, chat_s, _remainder, kb)
                     continue
 
                 if cmd == "paper":
