@@ -1238,6 +1238,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 <i>Pastki menyu:</i> 📊 Skan, 📋 Signallar va boshqalar — chat pastidagi tugmalar.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
 /chart [TICKER] — <b>chizilgan grafik rasm</b>: svecha + hajm + Entry/SL/TP + qo‘llab-quvvatlash/qarshilik zonalari (oxirgi skan darajalaridan)
+<i>Avto-grafik:</i> <code>TELEGRAM_SCAN_CHART_TOP_N=3</code> (0=o‘chiq, sukut) — har <code>/scan</code> dan keyin top signallarга chizilgan grafik rasm avtomatik biriktiriladi.
 <i>Avto-grafik:</i> <code>TELEGRAM_SCAN_CHART_TOP_N=3</code> (sukut 0=o‘chiq, 0…10) — har <code>/scan</code> dan keyin top signallarga grafik rasm avtomatik biriktiriladi.
 /status — bot/worker holati va env diagnostika
 /risk — paper risk limitlari (tez ko‘rish)

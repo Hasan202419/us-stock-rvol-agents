@@ -41,3 +41,12 @@ def test_respects_top_n_cap() -> None:
     ]
     got = bot._chartable_top_signals(rows, 2)
     assert [r["ticker"] for r in got] == ["C", "B"]
+
+
+def test_scan_chart_top_n_env_bounds(monkeypatch) -> None:
+    monkeypatch.delenv("TELEGRAM_SCAN_CHART_TOP_N", raising=False)
+    assert bot._scan_chart_top_n() == 0          # sukut: o'chiq
+    monkeypatch.setenv("TELEGRAM_SCAN_CHART_TOP_N", "3")
+    assert bot._scan_chart_top_n() == 3
+    monkeypatch.setenv("TELEGRAM_SCAN_CHART_TOP_N", "999")
+    assert bot._scan_chart_top_n() == 10         # 0..10 ga cheklanadi
