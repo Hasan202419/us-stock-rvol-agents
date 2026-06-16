@@ -831,6 +831,47 @@ def _amt_buy_top_n() -> int:
     return _env_int_bounded("TELEGRAM_AMT_BUY_TOP_N", 20, 1, 50)
 
 
+def _scan_chart_top_n() -> int:
+    """Skan natijasiga avtomatik biriktiriladigan grafik soni (0 = o‘chiq, sukut)."""
+
+    return _env_int_bounded("TELEGRAM_SCAN_CHART_TOP_N", 0, 0, 10)
+
+
+def _chartable_top_signals(ranked: List[Dict[str, Any]], top_n: int) -> List[Dict[str, Any]]:
+    """Grafik chizishga yaroqli top signallar: pass (kuzatuv emas) + candles bor, skor bo‘yicha."""
+
+    if top_n <= 0:
+        return []
+    out: List[Dict[str, Any]] = []
+    for r in ranked:
+        if not isinstance(r, dict) or r.get("watchlist_only"):
+            continue
+        if not r.get("strategy_pass") and not r.get("paper_trade_ready"):
+            continue
+        candles = r.get("candles")
+        if not (isinstance(candles, list) and len(candles) >= 2):
+            continue
+        out.append(r)
+    out.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
+    return out[:top_n]
+
+
+def _send_top_signal_charts(token: str, chat_s: str, ranked: List[Dict[str, Any]], kb: Dict[str, Any]) -> None:
+    """Skandan keyin top signallarga chizilgan grafik rasm (TELEGRAM_SCAN_CHART_TOP_N>0)."""
+
+    rows = _chartable_top_signals(ranked, _scan_chart_top_n())
+    for r in rows:
+        sym = str(r.get("ticker") or "?").upper()
+        try:
+            png = render_signal_chart(r, r.get("candles"))
+            if not png:
+                continue
+            caption = f"{chart_caption(r)}\n<a href=\"{_tradingview_url(sym)}\">TradingView</a>"
+            _send_photo(token, chat_s, png, caption, reply_markup=kb)
+        except Exception as exc:  # noqa: BLE001
+            print(f"telegram_command_bot scan-chart error ({sym}): {exc}", flush=True)
+
+
 def _resolve_auto_push_chat_id(allowed: Optional[set[str]]) -> Optional[str]:
     """Avtomatik push uchun chat: TELEGRAM_AUTO_PUSH_CHAT_ID > TELEGRAM_CHAT_ID > (allowlistda bitta id)."""
 
@@ -1066,6 +1107,9 @@ def _execute_scan_send_persist(
     )
     _send_html(token, chat_s, body, reply_markup=kb)
 
+    # Ixtiyoriy: top signallarga chizilgan grafik (TELEGRAM_SCAN_CHART_TOP_N>0)
+    _send_top_signal_charts(token, chat_s, ranked, kb)
+
     # 2-xabar: har doim AMT bo‘limi (BUY + ixtiyoriy VAL yaqin kuzatuv)
     if amt_buy_alert_enabled():
         amt_rows_raw = summary.get("amt_buy_signals") or []
@@ -1194,6 +1238,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 <i>Pastki menyu:</i> 📊 Skan, 📋 Signallar va boshqalar — chat pastidagi tugmalar.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
 /chart [TICKER] — <b>chizilgan grafik rasm</b>: svecha + hajm + Entry/SL/TP + qo‘llab-quvvatlash/qarshilik zonalari (oxirgi skan darajalaridan)
+<i>Avto-grafik:</i> <code>TELEGRAM_SCAN_CHART_TOP_N=3</code> (sukut 0=o‘chiq, 0…10) — har <code>/scan</code> dan keyin top signallarga grafik rasm avtomatik biriktiriladi.
 /status — bot/worker holati va env diagnostika
 /risk — paper risk limitlari (tez ko‘rish)
 /paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
