@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import Iterable, List
 
-# BRK.B, BF.B kabi oddiy Class B
-_CLASS_B_RE = re.compile(r"^[A-Z]{1,5}\.[A-Z]$")
+# BRK.B, BF.B kabi oddiy Class A/B/C (unit `.U`, warrant `.W`, rights `.R` emas)
+_CLASS_B_RE = re.compile(r"^[A-Z]{1,5}\.[ABC]$")
 _SYMBOL_CHARS_RE = re.compile(r"^[A-Z0-9.]+$")
 
 

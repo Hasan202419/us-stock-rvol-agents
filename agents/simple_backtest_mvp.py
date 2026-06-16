@@ -19,6 +19,38 @@ def daily_closes_yfinance(symbol: str, calendar_days: int) -> List[float]:
     return [float(x) for x in hist["Close"].astype(float).tolist()]
 
 
+def daily_candles_yfinance(symbol: str, calendar_days: int) -> List[Dict[str, Any]]:
+    """Kunlik OHLCV shamlar (t,o,h,l,c,v) — IBKR o‘chiq bo‘lsa zaxira manba. Bo‘sh agar topilmasa."""
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        return []
+
+    hist = yf.Ticker(symbol).history(period=f"{calendar_days}d", auto_adjust=False)
+    if hist is None or hist.empty:
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for ts, row in hist.iterrows():
+        try:
+            t_ms = int(ts.timestamp() * 1000)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        out.append(
+            {
+                "t": t_ms,
+                "o": float(row["Open"]),
+                "h": float(row["High"]),
+                "l": float(row["Low"]),
+                "c": float(row["Close"]),
+                "v": float(row.get("Volume") or 0),
+            }
+        )
+    out.sort(key=lambda b: b["t"])
+    return out
+
+
 def _sma(closes: List[float], period: int, end_exclusive: int) -> float | None:
     if end_exclusive < period or period <= 0:
         return None

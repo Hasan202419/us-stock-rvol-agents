@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 import pandas as pd
 import requests
 
-from agents.ibkr_market_data import fetch_ibkr_snapshot
+from agents.ibkr_market_data import fetch_ibkr_daily_candles, fetch_ibkr_snapshot
 from agents.session_calendar import bar_end_in_regular_session
 from agents.symbol_filter import is_scannable_us_equity
 
@@ -102,6 +102,7 @@ class MarketDataAgent:
             "polygon": lambda: {"candles": self._fetch_polygon_daily_candles(ticker)},
             "yahoo": lambda: self._fetch_yahoo_daily_bundle(ticker),
             "alpha_vantage": lambda: {"candles": self._fetch_alpha_vantage_daily(ticker)},
+            "ibkr": lambda: {"candles": fetch_ibkr_daily_candles(ticker)},
         }
         fetched_quotes: Dict[str, Dict[str, Any]] = {}
         fetched_candles: Dict[str, Dict[str, Any]] = {}
@@ -116,7 +117,12 @@ class MarketDataAgent:
         alpaca_bar = fetched_quotes.get("alpaca", {})
         yahoo_bundle = fetched_quotes.get("yahoo", {})
         ibkr_snap = fetched_quotes.get("ibkr", {})
-        candles = fetched_candles.get("polygon", {}).get("candles") or fetched_candles.get("yahoo", {}).get("candles") or []
+        candles = (
+            fetched_candles.get("polygon", {}).get("candles")
+            or fetched_candles.get("yahoo", {}).get("candles")
+            or fetched_candles.get("ibkr", {}).get("candles")
+            or []
+        )
 
         price = (
             quote.get("price")
@@ -130,6 +136,7 @@ class MarketDataAgent:
             quote.get("previous_close")
             or snapshot.get("previous_close")
             or yahoo_bundle.get("previous_close")
+            or ibkr_snap.get("previous_close")
             or 0.0
         )
         volume = (

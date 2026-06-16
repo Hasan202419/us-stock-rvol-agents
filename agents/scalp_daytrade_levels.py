@@ -7,7 +7,7 @@ strategiya SL/TP yoki ignition zonasidan deterministik hisoblanadi.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 
 def _truthy(raw: str | None, *, default: bool) -> bool:

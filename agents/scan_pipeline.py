@@ -391,7 +391,6 @@ def run_scan_market(
     for symbol in tickers:
         signal = results[symbol]
         analyst_decision = ""
-        analyst_reason = ""
         risk_level_value = ""
         chatgpt_allow = False
         paper_trade_ready = False

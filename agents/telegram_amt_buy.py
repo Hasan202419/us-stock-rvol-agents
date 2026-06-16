@@ -279,7 +279,7 @@ def build_amt_buy_alert_html(
 
     near = near_rows or []
     if near:
-        lines.append(f"<b>VAL yaqin kuzatuv</b> <i>(hali BUY emas)</i>\n")
+        lines.append("<b>VAL yaqin kuzatuv</b> <i>(hali BUY emas)</i>\n")
         for row in near:
             url = ""
             if chart_url_builder:

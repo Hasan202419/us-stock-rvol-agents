@@ -2,3 +2,6 @@
 pymupdf>=1.24.0
 pytesseract>=0.3.10
 pillow>=10.0.0
+
+# Ixtiyoriy: IBKR jonli ma'lumot/backtest (VPS'da TWS yoki IB Gateway ochiq bo'lsa)
+ib_insync>=0.9.86
