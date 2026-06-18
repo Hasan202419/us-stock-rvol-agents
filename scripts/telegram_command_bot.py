@@ -194,6 +194,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "status", "description": "Bot, Alpaca, avto-push holati"},
         {"command": "risk", "description": "Paper risk limitlari"},
         {"command": "buy", "description": "BUY signal: /buy AAPL — aniq SOTIB OL/KUTING/O‘TKAZ + savdo rejasi"},
+        {"command": "flow", "description": "Order Flow CLC: /flow AAPL — Context·Location·Confirmation + ikon"},
         {"command": "paper", "description": "Alpaca paper buyurtma"},
         {"command": "backtest", "description": "Strategiya backtest: /backtest TSLA (sma|rvol|ignition|gap)"},
         {"command": "discover", "description": "Eng yaxshi sozlamani izlash (sweep)"},
@@ -1251,6 +1252,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /status — bot/worker holati va env diagnostika
 /risk — paper risk limitlari (tez ko‘rish)
 /buy [TICKER] — <b>aniq BUY signal</b>: 🟢 SOTIB OL / 🟡 KUTING / 🔴 O‘TKAZ + ishonch% + professional savdo rejasi (Entry/SL/Target/R:R/pozitsiya). <code>/buy AAPL</code> yoki <code>/buy</code> (eng yaxshi BUY) — hajmga asoslangan (volume ignition) mezonlar.
+/flow [TICKER] — <b>Order Flow CLC</b> (The Order Flow Playbook): 🟢 KIRISH / 🟡 KUTING / ⛔ O‘TKAZ. Uchala ustun — <b>Context</b> (Qafas/Siqilish), <b>Location</b> (chekka/o‘rta), <b>Confirmation</b> (RVOL tape + Initiative Candle) — mos kelmaguncha BUY bermaydi. Absorption (katta hajm, kichik natija) ogohlantiradi. Misol: <code>/flow NVDA</code>.
 /paper — Alpaca paper buyurtma (oxirgi skan yoki <code>/paper scan</code>)
 /paper AAPL — ticker bo‘yicha · <code>/paper go</code> — eng yaxshi paper-ready
 /paper preview [TICKER] — <i>sinov</i>: sizing + risk + R:R ko‘rsatiladi, Alpaca'ga yuborilmaydi
@@ -1351,7 +1353,24 @@ def _dispatch_buy_command(token: str, chat_s: str, remainder: str, kb: Dict[str,
     def _finish_for(sig: Dict[str, Any]) -> None:
         res = evaluate_bullish_buy(sig)
         company = str(sig.get("company_name") or sig.get("company") or "")
-        _send_html(token, chat_s, format_bullish_buy_report(res, company=company), reply_markup=kb)
+        report = format_bullish_buy_report(res, company=company)
+        # Order Flow CLC tasdig'ini qo'shamiz (The Order Flow Playbook): uchala ustun mosligini ko'rsatadi.
+        try:
+            from agents.order_flow_signal import evaluate_order_flow, order_flow_badge
+
+            of = evaluate_order_flow(res.get("_signal") or sig)
+            ctx = "✅" if of.get("clc_context") else "❌"
+            loc = "✅" if of.get("clc_location") else "❌"
+            con = "✅" if of.get("clc_confirmation") else "❌"
+            report += (
+                f"\n<b>Order Flow (CLC):</b> {order_flow_badge(of)} "
+                f"({of.get('of_pillars_ok')}/3) — Context {ctx} · Location {loc} · Confirmation {con}"
+            )
+            if of.get("of_absorption_warn"):
+                report += "\n⚠️ <b>Absorption</b>: katta hajm, kichik natija — reversal xavfi, ehtiyot bo'ling."
+        except Exception as exc:  # noqa: BLE001
+            print(f"telegram_command_bot buy orderflow error: {exc}", flush=True)
+        _send_html(token, chat_s, report, reply_markup=kb)
         try:
             png = render_signal_chart(res.get("_signal") or sig, (res.get("_signal") or sig).get("candles"))
             if png:
@@ -1944,6 +1963,44 @@ def main() -> None:
 
                 if cmd == "buy":
                     _dispatch_buy_command(token, chat_s, _remainder, kb)
+                    continue
+
+                if cmd in {"flow", "of", "orderflow"}:
+                    sym_flow = (_remainder or "").strip().upper().split()[0] if (_remainder or "").strip() else ""
+                    if not sym_flow:
+                        _send_html(
+                            token, chat_s,
+                            "Foydalanish: <code>/flow AAPL</code> — Order Flow CLC bahosi "
+                            "(Context · Location · Confirmation).",
+                            reply_markup=kb,
+                        )
+                        continue
+                    _send_html(
+                        token, chat_s,
+                        f"⏳ Order Flow tahlil: <code>{_escape_html(sym_flow)}</code>…",
+                        reply_markup=kb,
+                    )
+
+                    def _flow_worker(t: str = sym_flow) -> None:
+                        from agents.order_flow_signal import evaluate_order_flow, format_order_flow_html
+
+                        sig = _buy_signal_for_ticker(t)
+                        if not sig:
+                            _send_html(
+                                token, chat_s,
+                                f"<code>{_escape_html(t)}</code> uchun ma'lumot yo'q — avval <code>/scan2b</code> "
+                                "yoki manba ulanishini tekshiring.",
+                                reply_markup=kb,
+                            )
+                            return
+                        res = evaluate_order_flow(sig)
+                        _send_html(
+                            token, chat_s,
+                            format_order_flow_html(sig, res, ticker=t),
+                            reply_markup=kb,
+                        )
+
+                    threading.Thread(target=_flow_worker, daemon=True, name=f"tg-flow-{sym_flow}").start()
                     continue
 
                 if cmd == "paper":

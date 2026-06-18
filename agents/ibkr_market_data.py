@@ -145,11 +145,22 @@ def _candles_with_ib(ib: Any, symbol: str, days: int) -> list[Dict[str, Any]]:
 
 
 def fetch_ibkr_snapshot(ticker: str) -> Dict[str, Any]:
-    """Bitta ticker uchun narx/hajm/previous_close (ib_insync bo‘lsa). Gateway yo‘q bo‘lsa {}."""
+    """Bitta ticker snapshot. Avval hosted Web API (gateway shart emas), bo‘lmasa ib_insync."""
 
     symbol = str(ticker or "").strip().upper()
     if not symbol:
         return {}
+    # 1) Hosted Web API (REST) — noutbuk/Gateway ochiq turishi shart emas
+    try:
+        from agents.ibkr_web_api import fetch_ibkr_web_snapshot, ibkr_web_enabled
+
+        if ibkr_web_enabled():
+            web = fetch_ibkr_web_snapshot(symbol)
+            if web:
+                return web
+    except Exception:
+        pass
+    # 2) ib_insync + Gateway (lokal/VPS)
     with ibkr_session() as ib:
         if ib is None:
             return {}
@@ -157,11 +168,20 @@ def fetch_ibkr_snapshot(ticker: str) -> Dict[str, Any]:
 
 
 def fetch_ibkr_daily_candles(ticker: str, days: int = 60) -> list[Dict[str, Any]]:
-    """Kunlik OHLCV shamlar (RVOL/ignition uchun). Gateway yo‘q bo‘lsa []."""
+    """Kunlik OHLCV shamlar. Avval hosted Web API, bo‘lmasa ib_insync (Gateway)."""
 
     symbol = str(ticker or "").strip().upper()
     if not symbol:
         return []
+    try:
+        from agents.ibkr_web_api import fetch_ibkr_web_daily_candles, ibkr_web_enabled
+
+        if ibkr_web_enabled():
+            web = fetch_ibkr_web_daily_candles(symbol, days)
+            if web:
+                return web
+    except Exception:
+        pass
     with ibkr_session() as ib:
         if ib is None:
             return []
@@ -170,6 +190,15 @@ def fetch_ibkr_daily_candles(ticker: str, days: int = 60) -> list[Dict[str, Any]
 
 def ibkr_status_line() -> str:
     """Telegram /status uchun bir qator HTML (escape qilinmasin — faqat ASCII)."""
+
+    # Hosted Web API yoqilgan bo‘lsa — uni birinchi ko‘rsatamiz (Gateway shart emas)
+    try:
+        from agents.ibkr_web_api import ibkr_web_enabled, ibkr_web_status_line
+
+        if ibkr_web_enabled():
+            return ibkr_web_status_line()
+    except Exception:
+        pass
 
     if not ibkr_enabled():
         return "IBKR: <i>OFF</i> (cloud: Alpaca/Polygon/Yahoo)"
