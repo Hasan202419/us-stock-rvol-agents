@@ -232,6 +232,29 @@ def _trade_levels(snap: Dict[str, Any]) -> Dict[str, float]:
 # Main screener
 # ---------------------------------------------------------------------------
 
+def _truthy(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _maybe_attach_tv(snap: Dict[str, Any], interval: str) -> None:
+    """TradingView tavsiyasini (BUY/SELL/NEUTRAL) signalga qo'shadi (env-gated)."""
+    if not _truthy("SCALP_TRADINGVIEW_ENABLED", default=False):
+        return
+    try:
+        from agents.tradingview_data import fetch_tv_analysis
+
+        tv = fetch_tv_analysis(snap["ticker"], interval=interval)
+        if tv:
+            snap["tv_recommendation"] = tv.get("recommendation")
+            snap["tv_rsi"] = tv.get("rsi")
+            snap["tv_analysis"] = tv
+    except Exception:  # noqa: BLE001 — TV ixtiyoriy, skanerni to'xtatmaydi
+        pass
+
+
 def screen_scalp_candidates(
     universe: Optional[List[str]] = None,
     *,
@@ -274,7 +297,14 @@ def screen_scalp_candidates(
             time.sleep(delay_sec)
 
     results.sort(key=lambda x: -float(x.get("scalp_score") or 0))
-    return results[:top_n]
+    top = results[:top_n]
+
+    # TradingView tavsiyasini faqat top nomzodlarga qo'shamiz (env-gated, sekinroq).
+    tv_interval = os.getenv("SCALP_TRADINGVIEW_INTERVAL", "5m")
+    for snap in top:
+        _maybe_attach_tv(snap, tv_interval)
+
+    return top
 
 
 def format_scalp_html(candidates: List[Dict[str, Any]]) -> str:
@@ -302,11 +332,20 @@ def format_scalp_html(candidates: List[Dict[str, Any]]) -> str:
         tp1 = lvl.get("tp1", 0)
         rr = lvl.get("rr", 0)
 
+        tv_rec = s.get("tv_recommendation")
+        tv_line = ""
+        if tv_rec:
+            from agents.tradingview_data import tv_recommendation_badge
+
+            rsi = s.get("tv_rsi")
+            rsi_txt = f" · RSI {rsi:.0f}" if isinstance(rsi, (int, float)) else ""
+            tv_line = f"\n   🧭 TV: {tv_recommendation_badge(tv_rec)}{rsi_txt}"
+
         lines.append(
             f"<b>{i}. <code>{t}</code></b> — {setup} {chg_icon}\n"
             f"   💲 ${price:.2f} ({chg:+.1f}%{gap_str})\n"
             f"   📊 RVOL <b>{rvol:.1f}×</b> · Vol {vol_str}\n"
-            f"   🎯 Kirish ~{entry} | SL ~{sl} | TP ~{tp1} | R:R {rr:.1f}\n"
+            f"   🎯 Kirish ~{entry} | SL ~{sl} | TP ~{tp1} | R:R {rr:.1f}{tv_line}\n"
             f"   📈 <a href=\"{tv}\">TradingView</a>"
         )
 

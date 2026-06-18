@@ -198,6 +198,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "backtest", "description": "Strategiya backtest: /backtest TSLA (sma|rvol|ignition|gap)"},
         {"command": "discover", "description": "Eng yaxshi sozlamani izlash (sweep)"},
         {"command": "scalp", "description": "Skalp/day-trade skaner (yfinance) — RVOL + gap + TradingView"},
+        {"command": "tvsignal", "description": "TradingView tahlil: /tvsignal AAPL 5m — BUY/SELL reyting + RSI/MACD"},
     ]
     try:
         r = requests.post(
@@ -1243,6 +1244,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 <code>TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST=true</code> (sukut) — avto-pushda kuzatuv bo‘limi.
 <i>Pastki menyu:</i> 📊 Skan, 📋 Signallar va boshqalar — chat pastidagi tugmalar.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
+/tvsignal [TICKER] [interval] — <b>TradingView texnik reyting</b>: STRONG_BUY/BUY/NEUTRAL/SELL + RSI/MACD (misol: <code>/tvsignal NVDA 5m</code>, <code>/tvsignal AAPL 1d</code>). Skalp uchun <code>1m</code>/<code>5m</code>; sukut <code>5m</code>.
 /chart [TICKER] — <b>chizilgan grafik rasm</b>: svecha + hajm + Entry/SL/TP + qo‘llab-quvvatlash/qarshilik zonalari (oxirgi skan darajalaridan)
 <i>Avto-grafik:</i> <code>TELEGRAM_SCAN_CHART_TOP_N=3</code> (0=o‘chiq, sukut) — har <code>/scan</code> dan keyin top signallarга chizilgan grafik rasm avtomatik biriktiriladi.
 <i>Avto-grafik:</i> <code>TELEGRAM_SCAN_CHART_TOP_N=3</code> (sukut 0=o‘chiq, 0…10) — har <code>/scan</code> dan keyin top signallarga grafik rasm avtomatik biriktiriladi.
@@ -1845,6 +1847,50 @@ def main() -> None:
                         ),
                         disable_preview=False,
                     )
+                    continue
+
+                if cmd in {"tvsignal", "tvs"}:
+                    parts = (_remainder or "").strip().upper().split()
+                    sym_tv = parts[0] if parts else os.getenv("TELEGRAM_DEFAULT_CHART_SYMBOL", "AAPL").strip().upper()
+                    interval_tv = parts[1].lower() if len(parts) > 1 else os.getenv("TRADINGVIEW_DEFAULT_INTERVAL", "5m")
+                    _send_html(
+                        token, chat_s,
+                        f"⏳ TradingView tahlil: <code>{_escape_html(sym_tv)}</code> ({_escape_html(interval_tv)})…",
+                        reply_markup=kb,
+                    )
+
+                    def _tvsignal_worker(t: str = sym_tv, iv: str = interval_tv) -> None:
+                        from agents.tradingview_data import fetch_tv_analysis, tv_recommendation_badge
+
+                        data = fetch_tv_analysis(t, interval=iv)
+                        if not data:
+                            _send_html(
+                                token, chat_s,
+                                f"<b>TradingView</b>: <code>{_escape_html(t)}</code> uchun tahlil olinmadi "
+                                "(ticker nomi yoki birja noto'g'ri bo'lishi mumkin).",
+                                reply_markup=kb,
+                            )
+                            return
+                        badge = tv_recommendation_badge(data.get("recommendation"))
+                        rsi = data.get("rsi")
+                        rsi_txt = f"{rsi:.1f}" if isinstance(rsi, (int, float)) else "—"
+                        macd = data.get("macd")
+                        macd_txt = f"{macd:.3f}" if isinstance(macd, (int, float)) else "—"
+                        _send_html(
+                            token, chat_s,
+                            f"<b>📊 TradingView tahlil · {_escape_html(t)}</b> ({_escape_html(data.get('interval', iv))})\n"
+                            f"Tavsiya: <b>{badge}</b>\n"
+                            f"Ovozlar: 🟢 {data.get('buy')} · 🔴 {data.get('sell')} · ⚪ {data.get('neutral')}\n"
+                            f"Ossillatorlar: <code>{_escape_html(str(data.get('oscillators') or '—'))}</code> · "
+                            f"MA: <code>{_escape_html(str(data.get('moving_averages') or '—'))}</code>\n"
+                            f"RSI: <code>{rsi_txt}</code> · MACD: <code>{macd_txt}</code>\n"
+                            f"<a href=\"{_tradingview_url(data.get('exchange', '') + ':' + t)}\">TradingView chart</a>\n"
+                            f"<i>ℹ️ TradingView texnik reytingi — investitsiya maslahati emas.</i>",
+                            reply_markup=kb,
+                            disable_preview=False,
+                        )
+
+                    threading.Thread(target=_tvsignal_worker, daemon=True, name=f"tg-tvsignal-{sym_tv}").start()
                     continue
 
                 if cmd == "chart":
