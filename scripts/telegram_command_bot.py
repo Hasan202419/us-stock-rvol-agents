@@ -1773,8 +1773,43 @@ def main() -> None:
                     continue
 
                 if cmd == "plan":
-                    sym_f = (_remainder or "").strip()
-                    _send_html(token, chat_s, _html_plan_from_last_scan(sym_f), reply_markup=kb)
+                    sym_f = (_remainder or "").strip().upper()
+                    plan_html = _html_plan_from_last_scan(sym_f)
+                    # Agar skanda topilmasa va ticker ko'rsatilgan bo'lsa — jonli ma'lumot olib ko'rish
+                    if sym_f and "topilmadi" in plan_html:
+                        _send_html(
+                            token, chat_s,
+                            f"⏳ <code>{_escape_html(sym_f)}</code> skanda yo'q — jonli ma'lumot tortilmoqda…",
+                            reply_markup=kb,
+                        )
+
+                        def _plan_live_worker(t: str = sym_f) -> None:
+                            sig = _buy_signal_for_ticker(t)
+                            if not sig:
+                                _send_html(
+                                    token, chat_s,
+                                    f"<b>/plan</b>: <code>{_escape_html(t)}</code> uchun ma'lumot olinmadi — "
+                                    "manba ulanishini yoki ticker nomini tekshiring.",
+                                    reply_markup=kb,
+                                )
+                                return
+                            body = deterministic_trade_plan_from_signal(
+                                sig, lang=os.getenv("ANALYST_TRADE_PLAN_LANG", "uz")
+                            )
+                            if not body:
+                                body = "Trade plan matni yo'q."
+                            _send_html(
+                                token, chat_s,
+                                f"<b>Trade plan · {_escape_html(t)}</b> <i>(jonli)</i>\n"
+                                f"<pre>{_escape_html(body)}</pre>",
+                                reply_markup=kb,
+                            )
+
+                        threading.Thread(
+                            target=_plan_live_worker, daemon=True, name=f"tg-plan-{sym_f}"
+                        ).start()
+                    else:
+                        _send_html(token, chat_s, plan_html, reply_markup=kb)
                     continue
 
                 if cmd in {"scan", "scanall", "scan2b"}:
