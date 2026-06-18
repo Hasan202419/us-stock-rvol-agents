@@ -1039,7 +1039,7 @@ def main() -> None:
         else:
             st.info("Boshlash uchun **Run market scan** bosing.", icon="📡")
 
-    tabs = st.tabs(["Mos kelganlar", "Barcha skan", "Paper savdo"])
+    tabs = st.tabs(["Mos kelganlar", "Barcha skan", "Paper savdo", "Skalp skaner"])
 
     pass_signals, watchlist_signals = _split_pass_and_watchlist(signals)
     table = signals_dataframe(pass_signals, current_mode)
@@ -1185,6 +1185,94 @@ def main() -> None:
 
     with tabs[2]:
         render_paper_trading_panel(pass_signals if summary else signals)
+
+    with tabs[3]:
+        render_scalp_screener_panel()
+
+
+def render_scalp_screener_panel() -> None:
+    """yfinance asosidagi skalp/day-trade skaner — RVOL + gap + TradingView."""
+
+    from agents.yfinance_screener import (
+        SCALP_UNIVERSE_DEFAULT,
+        screen_scalp_candidates,
+    )
+
+    st.subheader("Skalp / day-trade skaner (yfinance)")
+    st.caption(
+        "Kunlik yfinance ma'lumoti — RVOL, gap%, momentum bo‘yicha eng yaxshi "
+        "qisqa muddatli nomzodlar. Har birida Entry/SL/TP + TradingView havolasi."
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        min_rvol = st.slider("Min RVOL", 0.5, 5.0, 1.5, 0.1)
+    with col2:
+        min_price = st.slider("Min narx ($)", 1.0, 100.0, 5.0, 1.0)
+    with col3:
+        top_n = st.slider("Top N", 3, 20, 8, 1)
+
+    default_universe = ", ".join(SCALP_UNIVERSE_DEFAULT)
+    universe_raw = st.text_area(
+        "Universe (vergul bilan; bo‘sh = standart ro‘yxat)",
+        value="",
+        placeholder=default_universe,
+        height=80,
+    )
+
+    if st.button("Skalp skanerni ishga tushirish", type="primary"):
+        universe = None
+        if universe_raw.strip():
+            universe = [t.strip().upper() for t in universe_raw.replace("\n", ",").split(",") if t.strip()]
+
+        with st.spinner("yfinance ma'lumoti tortilmoqda…"):
+            try:
+                candidates = screen_scalp_candidates(
+                    universe=universe,
+                    min_rvol=min_rvol,
+                    min_price=min_price,
+                    top_n=int(top_n),
+                    delay_sec=0.1,
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Skaner xatosi: {exc}")
+                candidates = []
+
+        if not candidates:
+            st.warning("Nomzod topilmadi — filtrlarni yumshatib ko‘ring yoki internet/yfinance ni tekshiring.")
+        else:
+            rows = []
+            for s in candidates:
+                lvl = s.get("levels") or {}
+                rows.append(
+                    {
+                        "Ticker": s.get("ticker"),
+                        "Setup": s.get("setup_type"),
+                        "Narx": s.get("price"),
+                        "O‘zg %": s.get("change_percent"),
+                        "Gap %": s.get("gap_pct"),
+                        "RVOL": s.get("rvol"),
+                        "Hajm": s.get("volume"),
+                        "Skor": s.get("scalp_score"),
+                        "Kirish": lvl.get("entry"),
+                        "SL": lvl.get("stop"),
+                        "TP1": lvl.get("tp1"),
+                        "R:R": lvl.get("rr"),
+                        "TV Chart": s.get("tv_url"),
+                    }
+                )
+            df = pd.DataFrame(rows)
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "TV Chart": st.column_config.LinkColumn(
+                        "TV Chart", help="TradingView chartni yangi tabda oching", display_text="📈 TradingView"
+                    ),
+                },
+            )
+            st.caption("ℹ️ Kunlik yfinance ma'lumoti — realtime emas. Kirishdan oldin tasdiqlang.")
 
 
 if __name__ == "__main__":
