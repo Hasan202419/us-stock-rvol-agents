@@ -1,0 +1,9 @@
+requests>=2.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+yfinance>=0.2.40
+python-dotenv>=1.0.0
+# Ixtiyoriy (Alpaca realtime ma'lumoti uchun — kalit bo'lsa):
+alpaca-py>=0.20.0
+# Ixtiyoriy (IBKR Gateway uchun):
+# ib_insync>=0.9.86
