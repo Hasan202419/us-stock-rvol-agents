@@ -1260,7 +1260,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /paper preview [TICKER] — <i>sinov</i>: sizing + risk + R:R ko‘rsatiladi, Alpaca'ga yuborilmaydi
 /scalp [TICKER ...] — <b>skalp/day-trade skaner</b>: yfinance orqali RVOL + gap + momentum bo'yicha top nomzodlar · har birida Entry/SL/TP + <a href="https://www.tradingview.com/chart/">TradingView</a> havolasi. Ixtiyoriy: <code>/scalp AAPL NVDA AMD</code> (maxsus tickers). Env: <code>SCALP_UNIVERSE</code>, <code>SCALP_SCREEN_TOP_N</code> (sukut 8), <code>SCALP_MIN_RVOL</code> (sukut 1.5).
 /ignite [TICKER ...] [buy] — <b>volume ignition skaner</b>: ko'p stock bo'ylab hajm-portlashi (abnormal volume + qarshilikka yaqin) BUY/WATCH signallari. Har birida bosqich (Accumulation/Ignition/Breakout), davom ehtimoli, kirish zonasi, Entry/SL/TP/R:R. Misol: <code>/ignite</code>, <code>/ignite NVDA AMD</code>, <code>/ignite buy</code> (faqat BUY). Env: <code>IGNITION_UNIVERSE</code>, <code>IGNITION_SCREEN_TOP_N</code> (sukut 8).
-/proscan [TICKER ...] [watch] — <b>MASTER skaner</b> (ikki framework birlashgan): ignition skaner ko'p stockni topadi + har nomzodga <b>to'liq professional analyst trade plan</b> (Reason/Catalyst · Texnik setup · Entry · Stop · Target · R:R · pozitsiya o'lchami · Execution Plan · Final Summary). Sukut faqat BUY; <code>/proscan watch</code> WATCH'larni ham qo'shadi. Misol: <code>/proscan</code>, <code>/proscan NVDA AMD TSLA</code>. Env: <code>PROSCAN_TOP_N</code> (sukut 5).
+/proscan [TICKER ...] [N|all] [watch] — <b>MASTER skaner</b> (ikki framework birlashgan): ignition skaner ko'p stockni topadi + har nomzodga <b>to'liq professional analyst trade plan</b> (Reason/Catalyst · Texnik setup · Entry · Stop · Target · R:R · pozitsiya o'lchami · Execution Plan · Final Summary). <b>Keng skan:</b> <code>/proscan 100</code> yoki <code>/proscan all</code> — real US aksiyalari ro'yxatidan (UniverseAgent) skanlaydi. BUY topilmasa avtomatik WATCH ko'rsatadi. Misol: <code>/proscan</code>, <code>/proscan NVDA AMD</code>, <code>/proscan all watch</code>. Env: <code>PROSCAN_TOP_N</code> (5), <code>PROSCAN_UNIVERSE_MAX</code> (120).
 /backtest [TICKER] [sma|rvol|ignition|gap] — strategiya backtest (yahoo/IBKR kunlik; misol: <code>/backtest NVDA gap</code> — Gap-and-Go)
 <i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
 <i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY (Pine: AMT Scalping &amp; Volume Profile).
@@ -1653,8 +1653,39 @@ def _dispatch_ignite_command(token: str, chat_s: str, remainder: str, kb: Dict[s
     threading.Thread(target=_ignite_worker, daemon=True, name="tg-ignite").start()
 
 
+def _proscan_universe_from_parts(parts: List[str]) -> tuple[Optional[List[str]], str]:
+    """Tickerlar yoki keng universe (raqam / 'ALL') ni aniqlaydi.
+
+    Qaytadi: (universe_ro'yxati yoki None, izoh). Raqam yoki ALL bo'lsa
+    UniverseAgent'dan real US aksiyalari tortiladi (keng skan).
+    """
+    size: Optional[int] = None
+    leftover: List[str] = []
+    for p in parts:
+        if p == "ALL":
+            size = _env_int_bounded("PROSCAN_UNIVERSE_MAX", 120, 10, 300)
+        elif p.isdigit():
+            size = max(5, min(int(p), _env_int_bounded("PROSCAN_UNIVERSE_MAX", 120, 10, 300)))
+        else:
+            leftover.append(p)
+    if size:
+        try:
+            from agents.universe_agent import UniverseAgent
+
+            syms = UniverseAgent().fetch_symbols(limit=size)
+            syms = [s.strip().upper() for s in syms if s and s.strip()][:size]
+            if syms:
+                return syms, f"(keng universe — {len(syms)} ticker, biroz vaqt oladi)"
+        except Exception as exc:  # noqa: BLE001
+            print(f"telegram_command_bot proscan universe error: {exc}", flush=True)
+        return None, "(universe olinmadi — standart ro'yxat)"
+    if leftover:
+        return leftover, f"({len(leftover)} ticker)"
+    return None, "(yfinance universe)"
+
+
 def _dispatch_proscan_command(token: str, chat_s: str, remainder: str, kb: Dict[str, Any]) -> None:
-    """/proscan [TICKER ...] — master skaner: ignition nomzodlari + TO'LIQ analyst trade plan."""
+    """/proscan [TICKER ...] [N|all] [watch] — master skaner: ignition + TO'LIQ analyst plan."""
     from agents.ignition_screener import (
         format_ignition_html,
         format_pro_reports,
@@ -1666,10 +1697,9 @@ def _dispatch_proscan_command(token: str, chat_s: str, remainder: str, kb: Dict[
     if "WATCH" in parts:
         buy_only = False
         parts = [p for p in parts if p != "WATCH"]
-    tickers_override: Optional[List[str]] = parts or None
 
+    tickers_override, what = _proscan_universe_from_parts(parts)
     top_n = _env_int_bounded("PROSCAN_TOP_N", 5, 1, 10)
-    what = f"({len(tickers_override)} ticker)" if tickers_override else "(yfinance universe)"
     _send_html(token, chat_s, f"⏳ Master skaner ishlamoqda {what} — to'liq trade plan…", reply_markup=kb)
 
     def _proscan_worker() -> None:
@@ -1680,16 +1710,24 @@ def _dispatch_proscan_command(token: str, chat_s: str, remainder: str, kb: Dict[
                 buy_only=buy_only,
                 delay_sec=0.15,
             )
+            note = ""
+            # Avtomatik zaxira: BUY topilmasa, WATCH'larni ko'rsatamiz (bo'sh qaytarmaymiz)
+            if not rows and buy_only:
+                rows = screen_pro_candidates(
+                    universe=tickers_override, top_n=top_n, buy_only=False, delay_sec=0.15,
+                )
+                if rows:
+                    note = "<i>BUY topilmadi — eng kuchli WATCH nomzodlar ko'rsatilmoqda.</i>\n\n"
             if not rows:
                 _send_html(
                     token, chat_s,
-                    "🔍 <b>Master skaner</b>: mezonlarga mos BUY nomzod topilmadi. "
-                    "<code>/proscan WATCH</code> bilan WATCH'larni ham ko'ring.",
+                    "🔍 <b>Master skaner</b>: mezonlarga mos nomzod topilmadi. "
+                    "Keng skan uchun <code>/proscan 100</code> yoki <code>/proscan all</code> sinab ko'ring.",
                     reply_markup=kb,
                 )
                 return
             # 1) Qisqa umumiy jadval
-            _send_html(token, chat_s, format_ignition_html(rows), reply_markup=kb, disable_preview=True)
+            _send_html(token, chat_s, note + format_ignition_html(rows), reply_markup=kb, disable_preview=True)
             # 2) Har nomzod uchun to'liq analyst trade plan (alohida xabar)
             for report in format_pro_reports(rows):
                 _send_html(token, chat_s, report, reply_markup=kb, disable_preview=True)
