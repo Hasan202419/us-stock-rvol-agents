@@ -1138,6 +1138,23 @@ def _execute_scan_send_persist(
         _send_html(token, chat_s, build_telegram_framework_appendices_html(), reply_markup=kb)
 
 
+def _us_market_window_open(*, premarket_min: int = 60, postmarket_min: int = 0) -> bool:
+    """US bozori day-trading oynasidami (NY, dushanba-juma, 09:30-16:00 ± kengaytma)?
+
+    premarket_min — ochilishdan oldin necha daqiqa (pre-market tayyorlov).
+    Bayramlar hisobga olinmaydi (sodda). Tashqi tekshiruv: weekend/tunni filtrlaydi.
+    """
+    from agents.session_calendar import NY_TZ, is_weekday_et
+
+    now_ny = datetime.now(NY_TZ)
+    if not is_weekday_et(now_ny):
+        return False
+    minutes = now_ny.hour * 60 + now_ny.minute
+    open_min = 9 * 60 + 30 - max(0, premarket_min)
+    close_min = 16 * 60 + max(0, postmarket_min)
+    return open_min <= minutes <= close_min
+
+
 def _auto_push_ignition_signals(token: str, chat_id: str, *, heading_html: str) -> bool:
     """Avtomatik ignition/master bullish signallarini yuboradi (day-trading uchun).
 
@@ -1147,6 +1164,14 @@ def _auto_push_ignition_signals(token: str, chat_id: str, *, heading_html: str) 
     """
     if not _truthy_env("TELEGRAM_AUTO_PUSH_IGNITION", default=False):
         return False
+
+    # Day-trading: faqat bozor soatlarida yuboramiz (tunda/dam olish kunida spam yo'q)
+    if _truthy_env("TELEGRAM_AUTO_PUSH_IGNITION_MARKET_HOURS_ONLY", default=True):
+        pre = _env_int_bounded("TELEGRAM_AUTO_PUSH_IGNITION_PREMARKET_MIN", 60, 0, 240)
+        if not _us_market_window_open(premarket_min=pre):
+            print("telegram_command_bot: ignition auto-push — bozor yopiq, o'tkazib yuborildi", flush=True)
+            return True  # rejim yoqilgan (regular skan ishlamasin), lekin yuborilmadi
+
     from agents.ignition_screener import (
         format_ignition_html,
         format_pro_reports,
@@ -1296,7 +1321,7 @@ _help_text = """<b>Mavjud buyruqlar</b>
 shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 <code>TELEGRAM_AUTO_PUSH_PASS_ONLY=false</code> (sukut, Babir) — pass bo‘lmasa ham kuzatuv ro‘yxati (~6–10 ticker).
 <code>TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST=true</code> (sukut) — avto-pushda kuzatuv bo‘limi.
-<i>Day-trading avto-signal:</i> <code>TELEGRAM_AUTO_PUSH_IGNITION=true</code> — avto-push <b>volume-ignition master skaner</b>ni ishlatadi (ko‘p stock bo‘ylab faktlarga asoslangan bullish BUY/WATCH + to‘liq analyst plan). Sozlash: <code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES=30</code> (day-trading uchun tez-tez), <code>TELEGRAM_AUTO_PUSH_IGNITION_SIZE</code> (universe, sukut 60), <code>TELEGRAM_AUTO_PUSH_IGNITION_TOP_N</code> (sukut 6), <code>TELEGRAM_AUTO_PUSH_IGNITION_FULL=true</code> (to‘liq plan).
+<i>Day-trading avto-signal:</i> <code>TELEGRAM_AUTO_PUSH_IGNITION=true</code> — avto-push <b>volume-ignition master skaner</b>ni ishlatadi (ko‘p stock bo‘ylab faktlarga asoslangan bullish BUY/WATCH + to‘liq analyst plan). Sozlash: <code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES=30</code> (day-trading uchun tez-tez), <code>TELEGRAM_AUTO_PUSH_IGNITION_SIZE</code> (universe, sukut 60), <code>TELEGRAM_AUTO_PUSH_IGNITION_TOP_N</code> (sukut 6), <code>TELEGRAM_AUTO_PUSH_IGNITION_FULL=true</code> (to‘liq plan). Faqat bozor soatlarida yuboradi (tunda spam yo‘q): <code>TELEGRAM_AUTO_PUSH_IGNITION_MARKET_HOURS_ONLY=true</code> (sukut), <code>TELEGRAM_AUTO_PUSH_IGNITION_PREMARKET_MIN=60</code>. <b>Eslatma:</b> tez-tez intraday push uchun <code>TELEGRAM_AUTO_PUSH_AT</code> ni bo‘sh qoldiring (jadval rejimi interval'ni bloklaydi).
 <i>Pastki menyu:</i> 📊 Skan, 📋 Signallar va boshqalar — chat pastidagi tugmalar.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
 /tvsignal [TICKER] [interval] — <b>TradingView texnik reyting</b>: STRONG_BUY/BUY/NEUTRAL/SELL + RSI/MACD (misol: <code>/tvsignal NVDA 5m</code>, <code>/tvsignal AAPL 1d</code>). Skalp uchun <code>1m</code>/<code>5m</code>; sukut <code>5m</code>.
