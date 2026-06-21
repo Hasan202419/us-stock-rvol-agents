@@ -141,8 +141,12 @@ services:
         value: "true"
       - key: TELEGRAM_AUTO_PUSH_ENABLED
         value: "true"
+      - key: TELEGRAM_AUTO_PUSH_IGNITION
+        value: "true"
+      - key: TELEGRAM_AUTO_PUSH_AT
+        value: ""
       - key: TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES
-        value: "1440"
+        value: "30"
       - key: TELEGRAM_AUTO_PUSH_FIRST_DELAY_SEC
         value: "120"
       - key: TELEGRAM_AUTO_PUSH_PASS_ONLY
