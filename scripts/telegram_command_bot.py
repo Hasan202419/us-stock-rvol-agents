@@ -1138,6 +1138,54 @@ def _execute_scan_send_persist(
         _send_html(token, chat_s, build_telegram_framework_appendices_html(), reply_markup=kb)
 
 
+def _auto_push_ignition_signals(token: str, chat_id: str, *, heading_html: str) -> bool:
+    """Avtomatik ignition/master bullish signallarini yuboradi (day-trading uchun).
+
+    TELEGRAM_AUTO_PUSH_IGNITION=true bo'lsa ishlaydi. Keng universe bo'ylab
+    volume-ignition skaneri → BUY/WATCH ro'yxati; ixtiyoriy to'liq analyst plan.
+    Qaytadi: True (yuborildi) / False (rejim o'chiq).
+    """
+    if not _truthy_env("TELEGRAM_AUTO_PUSH_IGNITION", default=False):
+        return False
+    from agents.ignition_screener import (
+        format_ignition_html,
+        format_pro_reports,
+        screen_pro_candidates,
+    )
+
+    size = _env_int_bounded("TELEGRAM_AUTO_PUSH_IGNITION_SIZE", 60, 10, 250)
+    top_n = _env_int_bounded("TELEGRAM_AUTO_PUSH_IGNITION_TOP_N", 6, 1, 12)
+    full_plans = _truthy_env("TELEGRAM_AUTO_PUSH_IGNITION_FULL", default=True)
+
+    universe: Optional[List[str]] = None
+    try:
+        from agents.universe_agent import UniverseAgent
+
+        syms = UniverseAgent().fetch_symbols(limit=size)
+        universe = [s.strip().upper() for s in syms if s and s.strip()][:size] or None
+    except Exception as exc:  # noqa: BLE001
+        print(f"telegram_command_bot: auto-push ignition universe error: {exc}", flush=True)
+
+    rows = screen_pro_candidates(universe=universe, top_n=top_n, buy_only=False, delay_sec=0.1)
+    if not rows:
+        _send_html(
+            token, chat_id,
+            f"{heading_html}\n🔍 <b>Ignition signal</b>: hozircha mezonlarga mos nomzod yo'q "
+            "(sokin tape — bu normal).",
+        )
+        return True
+
+    buys = [r for r in rows if str(r.get("verdict")) == "BUY"]
+    note = "" if buys else "<i>BUY yo'q — eng kuchli WATCH nomzodlar.</i>\n"
+    _send_html(token, chat_id, f"{heading_html}\n{note}" + format_ignition_html(rows), disable_preview=True)
+    if full_plans:
+        # To'liq analyst plan faqat BUY (yo'q bo'lsa top WATCH) uchun
+        targets = buys or rows[:2]
+        for report in format_pro_reports(targets):
+            _send_html(token, chat_id, report, disable_preview=True)
+    return True
+
+
 def _auto_push_loop(token: str, chat_id: str, scan_lock: threading.Lock) -> None:
     """Kunlik: interval yoki lokal soat bo‘yicha (UZ vaqti bilan NY savdo kunlari)."""
 
@@ -1192,7 +1240,10 @@ def _auto_push_loop(token: str, chat_id: str, scan_lock: threading.Lock) -> None
                 )
             else:
                 head = "<b>Avtomatik market skani</b> <i>(Babir uslubi)</i>"
-            if use_trader2b_push and not use_scanall:
+            # Day-trading rejimi: ignition/master bullish signallar (TELEGRAM_AUTO_PUSH_IGNITION=true)
+            if _auto_push_ignition_signals(token, chat_id, heading_html=head):
+                pass
+            elif use_trader2b_push and not use_scanall:
                 _execute_scan_send_persist(
                     token,
                     chat_id,
@@ -1245,6 +1296,7 @@ _help_text = """<b>Mavjud buyruqlar</b>
 shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 <code>TELEGRAM_AUTO_PUSH_PASS_ONLY=false</code> (sukut, Babir) — pass bo‘lmasa ham kuzatuv ro‘yxati (~6–10 ticker).
 <code>TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST=true</code> (sukut) — avto-pushda kuzatuv bo‘limi.
+<i>Day-trading avto-signal:</i> <code>TELEGRAM_AUTO_PUSH_IGNITION=true</code> — avto-push <b>volume-ignition master skaner</b>ni ishlatadi (ko‘p stock bo‘ylab faktlarga asoslangan bullish BUY/WATCH + to‘liq analyst plan). Sozlash: <code>TELEGRAM_AUTO_PUSH_INTERVAL_MINUTES=30</code> (day-trading uchun tez-tez), <code>TELEGRAM_AUTO_PUSH_IGNITION_SIZE</code> (universe, sukut 60), <code>TELEGRAM_AUTO_PUSH_IGNITION_TOP_N</code> (sukut 6), <code>TELEGRAM_AUTO_PUSH_IGNITION_FULL=true</code> (to‘liq plan).
 <i>Pastki menyu:</i> 📊 Skan, 📋 Signallar va boshqalar — chat pastidagi tugmalar.
 /tv [TICKER] — TradingView chart link (misol: <code>/tv AAPL</code> yoki <code>/tv NYSE:IBM</code>)
 /tvsignal [TICKER] [interval] — <b>TradingView texnik reyting</b>: STRONG_BUY/BUY/NEUTRAL/SELL + RSI/MACD (misol: <code>/tvsignal NVDA 5m</code>, <code>/tvsignal AAPL 1d</code>). Skalp uchun <code>1m</code>/<code>5m</code>; sukut <code>5m</code>.
@@ -1296,6 +1348,7 @@ def _status_html() -> str:
     ap_tz = os.getenv("TELEGRAM_AUTO_PUSH_TZ", "Asia/Tashkent").strip()
     ap_pass = os.getenv("TELEGRAM_AUTO_PUSH_PASS_ONLY", "false").strip().lower()
     ap_babir = os.getenv("TELEGRAM_AUTO_PUSH_BABIR_WATCHLIST", "true").strip().lower()
+    ap_ign = os.getenv("TELEGRAM_AUTO_PUSH_IGNITION", "false").strip().lower()
     return (
         "<b>Bot status</b>\n"
         f"TRADING_MODE: <code>{_escape_html(trading_mode)}</code>\n"
@@ -1312,6 +1365,7 @@ def _status_html() -> str:
         f"TELEGRAM_AUTO_PUSH_AT: <code>{_escape_html(ap_at or '—')}</code> · TZ: <code>{_escape_html(ap_tz)}</code>\n"
         f"TELEGRAM_AUTO_PUSH_PASS_ONLY: <code>{_escape_html(ap_pass)}</code> · "
         f"BABIR_WATCHLIST: <code>{_escape_html(ap_babir)}</code>\n"
+        f"AUTO_PUSH_IGNITION (day-trade): <code>{_escape_html(ap_ign)}</code>\n"
         f"MAX_POSITION_SIZE_USD: <code>{_escape_html(max_pos)}</code>\n"
         f"MAX_RISK_PCT_OF_EQUITY: <code>{_escape_html(max_risk)}</code>\n"
         f"MIN_RISK_REWARD_RATIO: <code>{_escape_html(min_rr)}</code>\n"
