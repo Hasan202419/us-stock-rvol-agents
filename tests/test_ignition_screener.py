@@ -8,7 +8,9 @@ from unittest.mock import patch
 from agents.ignition_screener import (
     evaluate_ignition_for_snapshot,
     format_ignition_html,
+    format_pro_reports,
     screen_ignition_candidates,
+    screen_pro_candidates,
 )
 
 
@@ -127,3 +129,30 @@ def test_format_html_has_fields() -> None:
 def test_format_html_empty() -> None:
     html = format_ignition_html([])
     assert "topilmadi" in html
+
+
+# ---------------------------------------------------------------------------
+# proscan (master skaner) — to'liq analyst hisobot
+# ---------------------------------------------------------------------------
+
+def test_screen_pro_keeps_full_result() -> None:
+    with patch("agents.ignition_screener._yf_snapshot", side_effect=_fake_snapshot):
+        rows = screen_pro_candidates(["GOOD"], buy_only=False, delay_sec=0)
+    assert rows
+    assert rows[0].get("_buy_result") is not None
+
+
+def test_format_pro_reports_full_analyst_structure() -> None:
+    with patch("agents.ignition_screener._yf_snapshot", side_effect=_fake_snapshot):
+        rows = screen_pro_candidates(["GOOD"], buy_only=False, delay_sec=0)
+    reports = format_pro_reports(rows)
+    assert reports
+    text = reports[0]
+    # Professional analyst tuzilmasi maydonlari
+    for label in ("Master tahlil", "Entry Price:", "Stop Loss:", "Target Price:",
+                  "Risk/Reward Ratio:", "Execution Plan:", "Final Trade Summary:"):
+        assert label in text
+
+
+def test_format_pro_reports_empty() -> None:
+    assert format_pro_reports([]) == []

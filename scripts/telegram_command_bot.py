@@ -200,6 +200,7 @@ def _register_bot_menu_commands(token: str) -> None:
         {"command": "discover", "description": "Eng yaxshi sozlamani izlash (sweep)"},
         {"command": "scalp", "description": "Skalp/day-trade skaner (yfinance) — RVOL + gap + TradingView"},
         {"command": "ignite", "description": "Volume ignition skaner — ko'p stock BUY signal"},
+        {"command": "proscan", "description": "Master skaner — nomzodlar + to'liq analyst trade plan"},
         {"command": "tvsignal", "description": "TradingView tahlil: /tvsignal AAPL 5m — BUY/SELL reyting + RSI/MACD"},
     ]
     try:
@@ -1259,6 +1260,7 @@ shu lokal soatda (bozor ochilishidan oldin tayyorlov) top tickerlar yuboriladi.
 /paper preview [TICKER] — <i>sinov</i>: sizing + risk + R:R ko‘rsatiladi, Alpaca'ga yuborilmaydi
 /scalp [TICKER ...] — <b>skalp/day-trade skaner</b>: yfinance orqali RVOL + gap + momentum bo'yicha top nomzodlar · har birida Entry/SL/TP + <a href="https://www.tradingview.com/chart/">TradingView</a> havolasi. Ixtiyoriy: <code>/scalp AAPL NVDA AMD</code> (maxsus tickers). Env: <code>SCALP_UNIVERSE</code>, <code>SCALP_SCREEN_TOP_N</code> (sukut 8), <code>SCALP_MIN_RVOL</code> (sukut 1.5).
 /ignite [TICKER ...] [buy] — <b>volume ignition skaner</b>: ko'p stock bo'ylab hajm-portlashi (abnormal volume + qarshilikka yaqin) BUY/WATCH signallari. Har birida bosqich (Accumulation/Ignition/Breakout), davom ehtimoli, kirish zonasi, Entry/SL/TP/R:R. Misol: <code>/ignite</code>, <code>/ignite NVDA AMD</code>, <code>/ignite buy</code> (faqat BUY). Env: <code>IGNITION_UNIVERSE</code>, <code>IGNITION_SCREEN_TOP_N</code> (sukut 8).
+/proscan [TICKER ...] [watch] — <b>MASTER skaner</b> (ikki framework birlashgan): ignition skaner ko'p stockni topadi + har nomzodga <b>to'liq professional analyst trade plan</b> (Reason/Catalyst · Texnik setup · Entry · Stop · Target · R:R · pozitsiya o'lchami · Execution Plan · Final Summary). Sukut faqat BUY; <code>/proscan watch</code> WATCH'larni ham qo'shadi. Misol: <code>/proscan</code>, <code>/proscan NVDA AMD TSLA</code>. Env: <code>PROSCAN_TOP_N</code> (sukut 5).
 /backtest [TICKER] [sma|rvol|ignition|gap] — strategiya backtest (yahoo/IBKR kunlik; misol: <code>/backtest NVDA gap</code> — Gap-and-Go)
 <i>Skalp / day trade:</i> har signalda <b>KIRISH · SL · CHIQISH1/2</b> (<code>trade_levels_line</code>) — AMT yoki strategiya SL/TP; <code>SCALP_DAYTRADE_LEVELS_ENABLED=true</code> (sukut).
 <i>AMT scalping:</i> <code>AMT_VWAP_SCALP_ENABLED=true</code> — VAL/POC/VAH + EMA9 BUY (Pine: AMT Scalping &amp; Volume Profile).
@@ -1649,6 +1651,57 @@ def _dispatch_ignite_command(token: str, chat_s: str, remainder: str, kb: Dict[s
             )
 
     threading.Thread(target=_ignite_worker, daemon=True, name="tg-ignite").start()
+
+
+def _dispatch_proscan_command(token: str, chat_s: str, remainder: str, kb: Dict[str, Any]) -> None:
+    """/proscan [TICKER ...] — master skaner: ignition nomzodlari + TO'LIQ analyst trade plan."""
+    from agents.ignition_screener import (
+        format_ignition_html,
+        format_pro_reports,
+        screen_pro_candidates,
+    )
+
+    parts = [p.strip().upper() for p in (remainder or "").split() if p.strip()]
+    buy_only = True
+    if "WATCH" in parts:
+        buy_only = False
+        parts = [p for p in parts if p != "WATCH"]
+    tickers_override: Optional[List[str]] = parts or None
+
+    top_n = _env_int_bounded("PROSCAN_TOP_N", 5, 1, 10)
+    what = f"({len(tickers_override)} ticker)" if tickers_override else "(yfinance universe)"
+    _send_html(token, chat_s, f"⏳ Master skaner ishlamoqda {what} — to'liq trade plan…", reply_markup=kb)
+
+    def _proscan_worker() -> None:
+        try:
+            rows = screen_pro_candidates(
+                universe=tickers_override,
+                top_n=top_n,
+                buy_only=buy_only,
+                delay_sec=0.15,
+            )
+            if not rows:
+                _send_html(
+                    token, chat_s,
+                    "🔍 <b>Master skaner</b>: mezonlarga mos BUY nomzod topilmadi. "
+                    "<code>/proscan WATCH</code> bilan WATCH'larni ham ko'ring.",
+                    reply_markup=kb,
+                )
+                return
+            # 1) Qisqa umumiy jadval
+            _send_html(token, chat_s, format_ignition_html(rows), reply_markup=kb, disable_preview=True)
+            # 2) Har nomzod uchun to'liq analyst trade plan (alohida xabar)
+            for report in format_pro_reports(rows):
+                _send_html(token, chat_s, report, reply_markup=kb, disable_preview=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"telegram_command_bot proscan_worker error: {exc}", flush=True)
+            _send_html(
+                token, chat_s,
+                f"<b>Master skaner xato</b>: <code>{_escape_html(str(exc)[:300])}</code>",
+                reply_markup=kb,
+            )
+
+    threading.Thread(target=_proscan_worker, daemon=True, name="tg-proscan").start()
 
 
 def main() -> None:
@@ -2168,6 +2221,10 @@ def main() -> None:
 
                 if cmd in {"ignite", "screen", "ignition"}:
                     _dispatch_ignite_command(token, chat_s, _remainder, kb)
+                    continue
+
+                if cmd in {"proscan", "masters", "pro"}:
+                    _dispatch_proscan_command(token, chat_s, _remainder, kb)
                     continue
 
                 _send_html(

@@ -17,7 +17,11 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
-from agents.bullish_buy_signal import evaluate_bullish_buy, verdict_badge
+from agents.bullish_buy_signal import (
+    evaluate_bullish_buy,
+    format_bullish_buy_report,
+    verdict_badge,
+)
 from agents.yfinance_screener import SCALP_UNIVERSE_DEFAULT, _tv_url, _yf_snapshot
 
 
@@ -69,6 +73,8 @@ def evaluate_ignition_for_snapshot(snap: Dict[str, Any]) -> Optional[Dict[str, A
         "target": res.get("target"),
         "rr": res.get("rr"),
         "tv_url": snap.get("tv_url") or _tv_url(str(res.get("ticker") or "")),
+        "_buy_result": res,  # to'liq analyst hisobot uchun (format_bullish_buy_report)
+        "_company": snap.get("company") or snap.get("company_name") or "",
     }
 
 
@@ -163,3 +169,37 @@ def format_ignition_html(rows: List[Dict[str, Any]]) -> str:
         "Bu avtomatik BUY emas — manual review.</i>"
     )
     return "\n".join(lines)
+
+
+def format_pro_reports(rows: List[Dict[str, Any]]) -> List[str]:
+    """Har nomzod uchun TO'LIQ professional analyst trade plan (master format).
+
+    Ikki frameworkni birlashtiradi: ignition skaner (nomzod topish) + analyst
+    tuzilmasi (Reason/Setup/Entry/SL/Target/R:R/Position/Execution/Final Summary).
+    Har bir nomzod alohida HTML matn (Telegramda alohida xabar sifatida yuboriladi).
+    """
+    out: List[str] = []
+    for i, r in enumerate(rows, 1):
+        full = r.get("_buy_result")
+        if not full:
+            continue
+        company = str(r.get("_company") or "")
+        report = format_bullish_buy_report(full, company=company)
+        header = f"<b>#{i} — Master tahlil</b>"
+        tv = _esc(r.get("tv_url") or "")
+        footer = f"\n🔗 <a href=\"{tv}\">TradingView</a>" if tv else ""
+        out.append(f"{header}\n{report}{footer}")
+    return out
+
+
+def screen_pro_candidates(
+    universe: Optional[List[str]] = None,
+    *,
+    top_n: int = 5,
+    buy_only: bool = True,
+    delay_sec: float = 0.15,
+) -> List[Dict[str, Any]]:
+    """Master skaner: ignition nomzodlari + har biriga to'liq analyst natija (_buy_result)."""
+    return screen_ignition_candidates(
+        universe, top_n=top_n, include_watch=not buy_only, delay_sec=delay_sec
+    )
